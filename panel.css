@@ -259,6 +259,14 @@ select {
   color: var(--accent);
 }
 
+.tab-row.drop-before {
+  border-top: 2px solid var(--accent);
+}
+
+.tab-row.drop-after {
+  border-bottom: 2px solid var(--accent);
+}
+
 .empty {
   text-align: center;
   color: #8c8c8c;

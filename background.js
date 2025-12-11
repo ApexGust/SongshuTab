@@ -209,24 +209,31 @@ const messageHandlers = {
     return group;
   },
   async moveTab(message) {
-    const { fromGroupId, toGroupId, tabId, targetTabId } = message;
+    const { fromGroupId, toGroupId, tabId, targetTabId, insertAfter } = message;
     const { groups } = await loadState();
     const from = groups.find((g) => g.id === fromGroupId);
     const to = groups.find((g) => g.id === toGroupId);
     if (!from || !to) throw new Error("目标分组不存在");
+    // 拖拽到自身：无需移动
+    if (from.id === to.id && tabId === targetTabId) return true;
+    // 预先记录同组目标索引，避免移除后索引偏移
+    let targetIdxInSameGroup = -1;
+    if (from.id === to.id && targetTabId) {
+      targetIdxInSameGroup = to.tabs.findIndex((t) => t.id === targetTabId);
+    }
     const idx = from.tabs.findIndex((t) => t.id === tabId);
     if (idx < 0) throw new Error("未找到标签");
     const [tab] = from.tabs.splice(idx, 1);
 
     // 组内重排或跨组插入目标位置
     if (from.id === to.id) {
-      if (targetTabId) {
-        const targetIdx = to.tabs.findIndex((t) => t.id === targetTabId);
-        if (targetIdx >= 0) {
-          to.tabs.splice(targetIdx, 0, tab);
-        } else {
-          to.tabs.push(tab);
-        }
+      if (targetTabId && targetIdxInSameGroup >= 0) {
+        // 如果原位置在目标前面，删除后目标索引前移一位
+        let adjustedIdx = idx < targetIdxInSameGroup ? targetIdxInSameGroup - 1 : targetIdxInSameGroup;
+        if (insertAfter) adjustedIdx += 1;
+        if (adjustedIdx < 0) adjustedIdx = 0;
+        if (adjustedIdx > to.tabs.length) adjustedIdx = to.tabs.length;
+        to.tabs.splice(adjustedIdx, 0, tab);
       } else {
         to.tabs.push(tab);
       }
@@ -237,7 +244,10 @@ const messageHandlers = {
     if (targetTabId) {
       const targetIdx = to.tabs.findIndex((t) => t.id === targetTabId);
       if (targetIdx >= 0) {
-        to.tabs.splice(targetIdx, 0, tab);
+        let adjustedIdx = insertAfter ? targetIdx + 1 : targetIdx;
+        if (adjustedIdx < 0) adjustedIdx = 0;
+        if (adjustedIdx > to.tabs.length) adjustedIdx = to.tabs.length;
+        to.tabs.splice(adjustedIdx, 0, tab);
       } else {
         to.tabs.push(tab);
       }

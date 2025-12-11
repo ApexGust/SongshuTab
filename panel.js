@@ -213,12 +213,24 @@ function render(groups) {
       }
     }
 
-    const dropZone = tabList;
+    const dropZone = groupEl;
     ["dragover", "dragenter"].forEach((evt) =>
       dropZone.addEventListener(evt, (e) => {
         if (!dragState) return;
         e.preventDefault();
         dropZone.classList.add("drop-target");
+
+        const targetRow = e.target.closest(".tab-row");
+        clearInsertIndicators();
+        if (targetRow) {
+          const rect = targetRow.getBoundingClientRect();
+          const midpoint = rect.top + rect.height / 2;
+          if (e.clientY > midpoint) {
+            targetRow.classList.add("drop-after");
+          } else {
+            targetRow.classList.add("drop-before");
+          }
+        }
       }),
     );
 
@@ -230,17 +242,27 @@ function render(groups) {
         if (evt === "drop") {
           const targetRow = e.target.closest(".tab-row");
           const targetTabId = targetRow?.dataset.tabId;
+          let insertAfter = false;
+          if (targetRow) {
+            const rect = targetRow.getBoundingClientRect();
+            const midpoint = rect.top + rect.height / 2;
+            insertAfter = e.clientY > midpoint;
+          }
 
-          // 同组拖拽允许重新排序
+          // 同组拖拽允许重新排序（支持插入到目标前/后）
           await send("moveTab", {
             fromGroupId: dragState.fromGroupId,
             toGroupId: group.id,
             tabId: dragState.tabId,
             targetTabId,
+            insertAfter,
           });
 
           dragState = null;
+          clearInsertIndicators();
           await load();
+        } else {
+          clearInsertIndicators();
         }
       }),
     );
@@ -315,6 +337,13 @@ function hideContextMenu() {
 
 function clearDropTargets() {
   document.querySelectorAll(".drop-target").forEach((el) => el.classList.remove("drop-target"));
+  clearInsertIndicators();
+}
+
+function clearInsertIndicators() {
+  document.querySelectorAll(".tab-row.drop-before, .tab-row.drop-after").forEach((el) => {
+    el.classList.remove("drop-before", "drop-after");
+  });
 }
 
 function startEditTabTitle(titleEl, groupId, tabId) {
