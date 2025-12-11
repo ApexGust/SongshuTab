@@ -46,12 +46,12 @@ OneTab就是这样，足够简单。不过有些功能不满足我的需求，�
 ![设置页面](./docs/images/设置页面.png)
 
 ## 安装
-1. 下载源码：`git clone https://github.com/prayfff/SongshuTab.git`
+1. 下载源码：`git clone https://github.com/ApexGust/SongshuTab.git`
 2. 打开 Chrome/Edge 扩展管理页：`chrome://extensions/`。  
 3. 打开「开发者模式」。  
 4. 点击「加载已解压的扩展程序」，选择本仓库目录 `/xxx/xxx/xxx/SongshuTab`。  
 5. 安装后点击扩展图标，按当前设置在侧栏或新标签页打开面板。
-![安装步骤](./docs/images/install.png)
+![安装步骤](./docs/images/安装.png)
 
 ## 我的使用习惯推荐给大家
 ![使用习惯](./docs/images/使用习惯推荐.png)
