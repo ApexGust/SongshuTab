@@ -1,0 +1,43 @@
+{
+  "manifest_version": 3,
+  "name": "松鼠标签",
+  "description": "收纳当前窗口标签，并在侧栏轻量查看、重命名、分组恢复。",
+  "version": "0.0.1",
+  "icons": {
+    "16": "icon.png",
+    "48": "icon.png",
+    "128": "icon.png"
+  },
+  "action": {
+    "default_icon": {
+      "16": "icon.png",
+      "48": "icon.png",
+      "128": "icon.png"
+    },
+    "default_title": "打开标签收纳侧栏"
+  },
+  "permissions": [
+    "tabs",
+    "storage",
+    "sidePanel"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "side_panel": {
+    "default_path": "panel.html"
+  },
+  "options_page": "settings.html",
+  "commands": {
+    "quick-capture-active": {
+      "suggested_key": {
+        "default": "Ctrl+E"
+      },
+      "description": "收纳当前活动标签到快捷分组"
+    }
+  }
+}
+

@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>插件设置</title>
+    <link rel="stylesheet" href="settings.css" />
+  </head>
+  <body>
+    <div class="page">
+      <header>
+        <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 8px;">
+          <img id="header-icon" alt="标签收纳" style="width: 32px; height: 32px;" />
+          <h1 style="margin: 0;">标签收纳设置</h1>
+        </div>
+        <p class="muted">自定义配色与快捷键</p>
+      </header>
+
+      <section class="card">
+        <div class="row">
+          <label for="theme">配色主题</label>
+          <select id="theme">
+            <option value="dark">深色</option>
+            <option value="light">浅色</option>
+          </select>
+        </div>
+        <p class="hint">侧栏将按所选主题渲染</p>
+      </section>
+
+      <section class="card">
+        <div class="row">
+          <label for="view-mode">显示方式</label>
+          <select id="view-mode">
+            <option value="side">侧栏（默认）</option>
+            <option value="tab">新开标签页</option>
+          </select>
+        </div>
+        <p class="hint">选择侧栏（若浏览器支持）或在新标签页中打开面板</p>
+      </section>
+
+      <section class="card">
+        <div class="row">
+          <label>快捷键</label>
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <span class="default-badge">默认</span>
+            <div style="display: flex; align-items: center; gap: 4px;">
+              <div class="kbd">Command</div> + <div class="kbd">E</div>
+            </div>
+          </div>
+        </div>
+        <p class="muted small">用于"收纳当前活动标签"命令，默认快捷键为 Ctrl+E（Mac 上为 Command+E）。若与系统快捷键冲突，请在浏览器的"快捷键"页面手动调整。</p>
+        <button id="open-shortcuts" class="shortcuts-btn">打开浏览器快捷键设置</button>
+      </section>
+
+      <section class="card">
+        <h3>用户分组设置</h3>
+        <p class="hint">管理自建分组：点击标签后是否保留在列表中</p>
+        <div id="user-groups" class="groups-list">
+          <div class="empty-groups">暂无用户分组</div>
+        </div>
+      </section>
+    </div>
+
+    <script src="settings.js"></script>
+  </body>
+</html>
+
