@@ -228,13 +228,17 @@ function render(groups) {
         e.preventDefault();
         dropZone.classList.remove("drop-target");
         if (evt === "drop") {
-          if (dragState.fromGroupId !== group.id) {
-            await send("moveTab", {
-              fromGroupId: dragState.fromGroupId,
-              toGroupId: group.id,
-              tabId: dragState.tabId,
-            });
-          }
+          const targetRow = e.target.closest(".tab-row");
+          const targetTabId = targetRow?.dataset.tabId;
+
+          // 同组拖拽允许重新排序
+          await send("moveTab", {
+            fromGroupId: dragState.fromGroupId,
+            toGroupId: group.id,
+            tabId: dragState.tabId,
+            targetTabId,
+          });
+
           dragState = null;
           await load();
         }

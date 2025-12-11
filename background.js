@@ -209,16 +209,41 @@ const messageHandlers = {
     return group;
   },
   async moveTab(message) {
-    const { fromGroupId, toGroupId, tabId } = message;
+    const { fromGroupId, toGroupId, tabId, targetTabId } = message;
     const { groups } = await loadState();
     const from = groups.find((g) => g.id === fromGroupId);
     const to = groups.find((g) => g.id === toGroupId);
     if (!from || !to) throw new Error("目标分组不存在");
-    if (from.id === to.id) return true;
     const idx = from.tabs.findIndex((t) => t.id === tabId);
     if (idx < 0) throw new Error("未找到标签");
     const [tab] = from.tabs.splice(idx, 1);
-    to.tabs.push(tab);
+
+    // 组内重排或跨组插入目标位置
+    if (from.id === to.id) {
+      if (targetTabId) {
+        const targetIdx = to.tabs.findIndex((t) => t.id === targetTabId);
+        if (targetIdx >= 0) {
+          to.tabs.splice(targetIdx, 0, tab);
+        } else {
+          to.tabs.push(tab);
+        }
+      } else {
+        to.tabs.push(tab);
+      }
+      await persistGroups(groups);
+      return true;
+    }
+
+    if (targetTabId) {
+      const targetIdx = to.tabs.findIndex((t) => t.id === targetTabId);
+      if (targetIdx >= 0) {
+        to.tabs.splice(targetIdx, 0, tab);
+      } else {
+        to.tabs.push(tab);
+      }
+    } else {
+      to.tabs.push(tab);
+    }
     await persistGroups(groups);
     return true;
   },
