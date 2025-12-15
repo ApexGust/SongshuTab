@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "松鼠标签",
   "description": "收纳当前窗口标签，并在侧栏轻量查看、重命名、分组恢复。",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "icons": {
     "16": "icon.png",
     "48": "icon.png",

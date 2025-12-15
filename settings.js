@@ -2,6 +2,7 @@ const themeSelect = document.getElementById("theme");
 const viewModeSelect = document.getElementById("view-mode");
 const userGroupsEl = document.getElementById("user-groups");
 const openShortcutsBtn = document.getElementById("open-shortcuts");
+const showBrowsingEl = document.getElementById("show-browsing");
 
 // 设置页面图标和 favicon
 function setupIcons() {
@@ -26,8 +27,10 @@ async function init() {
   const stored = await chrome.storage.local.get("settings");
   const theme = stored.settings?.theme || "dark";
   const viewMode = stored.settings?.viewMode || "side";
+  const showBrowsingTabs = stored.settings?.showBrowsingTabs || false;
   themeSelect.value = theme;
   viewModeSelect.value = viewMode;
+  showBrowsingEl.checked = !!showBrowsingTabs;
   await loadUserGroups();
 }
 
@@ -122,6 +125,11 @@ themeSelect.addEventListener("change", async (e) => {
 viewModeSelect.addEventListener("change", async (e) => {
   const val = e.target.value === "tab" ? "tab" : "side";
   await updateSettings({ viewMode: val });
+});
+
+showBrowsingEl.addEventListener("change", async (e) => {
+  const enabled = !!e.target.checked;
+  await updateSettings({ showBrowsingTabs: enabled });
 });
 
 openShortcutsBtn.addEventListener("click", () => {

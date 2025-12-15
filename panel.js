@@ -2,6 +2,7 @@ const groupsEl = document.getElementById("groups");
 const emptyEl = document.getElementById("empty");
 const addGroupBtn = document.getElementById("add-group");
 const settingsBtn = document.getElementById("open-settings");
+const BROWSING_GROUP_ID = "browsing-live";
 const FALLBACK_ICON =
   'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><rect width="16" height="16" rx="3" fill="%23d0d0d5"/><path d="M4 5h8v1H4zm0 3h8v1H4zm0 3h5v1H4z" fill="%238c8c94"/></svg>';
 let contextMenu;
@@ -28,7 +29,8 @@ settingsBtn.addEventListener("click", () => {
 });
 
 async function load() {
-  const res = await send("getData");
+  const currentWindow = await chrome.windows.getCurrent();
+  const res = await send("getData", { windowId: currentWindow.id });
   applyTheme(res.settings?.theme);
   render(res.groups);
 }
@@ -48,6 +50,7 @@ function render(groups) {
     const isCollapsed = collapsedGroups.has(group.id);
     // 判断是否为默认分组
     const isDefaultGroup = group.id === "pinned-default" || group.id === "quick-default";
+    const isBrowsingGroup = group.id === BROWSING_GROUP_ID;
     const header = document.createElement("div");
     header.className = "group-header";
     
@@ -59,7 +62,11 @@ function render(groups) {
     collapseBtn.title = "收起/展开";
     collapseBtn.setAttribute("data-group", group.id);
     const isPinnedGroup = group.name === "标签钉子户";
-    collapseBtn.textContent = isPinnedGroup ? "📌" : isCollapsed ? "📂" : "📁";
+    if (isBrowsingGroup) {
+      collapseBtn.textContent = "🛰";
+    } else {
+      collapseBtn.textContent = isPinnedGroup ? "📌" : isCollapsed ? "📂" : "📁";
+    }
     
     const groupTitle = document.createElement("div");
     groupTitle.className = `group-title ${group.persistent ? 'no-edit' : ''}`;
@@ -73,24 +80,25 @@ function render(groups) {
     
     const groupActions = document.createElement("div");
     groupActions.className = "group-actions";
-    
-    const restoreBtn = document.createElement("button");
-    restoreBtn.setAttribute("data-action", "restore-group");
-    restoreBtn.textContent = "全部打开";
-    
-    const clearBtn = document.createElement("button");
-    clearBtn.setAttribute("data-action", "clear-group");
-    clearBtn.textContent = "清空组";
-    
-    groupActions.appendChild(restoreBtn);
-    groupActions.appendChild(clearBtn);
-    
-    // 只有用户创建的分组才显示删除按钮（默认分组不显示）
-    if (!group.persistent && !isDefaultGroup) {
-      const deleteBtn = document.createElement("button");
-      deleteBtn.setAttribute("data-action", "delete-group");
-      deleteBtn.textContent = "删除组";
-      groupActions.appendChild(deleteBtn);
+    if (!isBrowsingGroup) {
+      const restoreBtn = document.createElement("button");
+      restoreBtn.setAttribute("data-action", "restore-group");
+      restoreBtn.textContent = "全部打开";
+      
+      const clearBtn = document.createElement("button");
+      clearBtn.setAttribute("data-action", "clear-group");
+      clearBtn.textContent = "清空组";
+      
+      groupActions.appendChild(restoreBtn);
+      groupActions.appendChild(clearBtn);
+      
+      // 只有用户创建的分组才显示删除按钮（默认分组不显示）
+      if (!group.persistent && !isDefaultGroup) {
+        const deleteBtn = document.createElement("button");
+        deleteBtn.setAttribute("data-action", "delete-group");
+        deleteBtn.textContent = "删除组";
+        groupActions.appendChild(deleteBtn);
+      }
     }
     
     header.appendChild(groupLeft);
@@ -109,7 +117,7 @@ function render(groups) {
       const row = document.createElement("div");
       row.className = "tab-row";
       const title = tab.customTitle || tab.title || tab.url;
-      row.draggable = true;
+      row.draggable = !isBrowsingGroup;
       row.dataset.tabId = tab.id;
       row.dataset.groupId = group.id;
       const img = document.createElement("img");
@@ -125,18 +133,26 @@ function render(groups) {
       const actionsDiv = document.createElement("div");
       actionsDiv.className = "tab-actions";
       
-      const renameBtn = document.createElement("button");
-      renameBtn.setAttribute("data-action", "rename-tab");
-      renameBtn.title = "重命名";
-      renameBtn.textContent = "✎";
-      
-      const deleteBtn = document.createElement("button");
-      deleteBtn.setAttribute("data-action", "delete-tab");
-      deleteBtn.title = "删除";
-      deleteBtn.textContent = "×";
-      
-      actionsDiv.appendChild(renameBtn);
-      actionsDiv.appendChild(deleteBtn);
+      if (isBrowsingGroup) {
+        const closeBtn = document.createElement("button");
+        closeBtn.setAttribute("data-action", "close-live-tab");
+        closeBtn.title = "关闭";
+        closeBtn.textContent = "×";
+        actionsDiv.appendChild(closeBtn);
+      } else {
+        const renameBtn = document.createElement("button");
+        renameBtn.setAttribute("data-action", "rename-tab");
+        renameBtn.title = "重命名";
+        renameBtn.textContent = "✎";
+        
+        const deleteBtn = document.createElement("button");
+        deleteBtn.setAttribute("data-action", "delete-tab");
+        deleteBtn.title = "删除";
+        deleteBtn.textContent = "×";
+        
+        actionsDiv.appendChild(renameBtn);
+        actionsDiv.appendChild(deleteBtn);
+      }
       
       row.appendChild(img);
       row.appendChild(titleDiv);
@@ -151,33 +167,50 @@ function render(groups) {
         await load();
       });
 
-      // 双击或点击重命名按钮进入编辑
-      tabTitleEl.addEventListener("dblclick", (e) => {
-        e.stopPropagation();
-        startEditTabTitle(tabTitleEl, group.id, tab.id);
-      });
+      if (!isBrowsingGroup) {
+        // 双击或点击重命名按钮进入编辑
+        tabTitleEl.addEventListener("dblclick", (e) => {
+          e.stopPropagation();
+          startEditTabTitle(tabTitleEl, group.id, tab.id);
+        });
 
-      renameBtn.addEventListener("click", (e) => {
-        e.stopPropagation();
-        startEditTabTitle(tabTitleEl, group.id, tab.id);
-      });
+        const renameBtn = actionsDiv.querySelector('[data-action="rename-tab"]');
+        renameBtn?.addEventListener("click", (e) => {
+          e.stopPropagation();
+          startEditTabTitle(tabTitleEl, group.id, tab.id);
+        });
+      } else {
+        const closeBtn = actionsDiv.querySelector('[data-action="close-live-tab"]');
+        closeBtn?.addEventListener("click", async (e) => {
+          e.stopPropagation();
+          if (!tab.liveTabId) return;
+          try {
+            await send("closeLiveTab", { tabId: tab.liveTabId });
+          } catch (err) {
+            console.error(err);
+          }
+        });
+      }
 
       // 移除右键菜单，改用hover按钮
-      row.addEventListener("dragstart", (e) => {
-        dragState = { tabId: tab.id, fromGroupId: group.id };
-        e.dataTransfer.effectAllowed = "move";
-        e.dataTransfer.setData("text/plain", tab.id);
-        row.classList.add("dragging");
-      });
-      row.addEventListener("dragend", () => {
-        row.classList.remove("dragging");
-        dragState = null;
-        clearDropTargets();
-      });
-      deleteBtn.addEventListener("click", async () => {
-        await send("removeTab", { groupId: group.id, tabId: tab.id });
-        await load();
-      });
+      if (!isBrowsingGroup) {
+        row.addEventListener("dragstart", (e) => {
+          dragState = { tabId: tab.id, fromGroupId: group.id };
+          e.dataTransfer.effectAllowed = "move";
+          e.dataTransfer.setData("text/plain", tab.id);
+          row.classList.add("dragging");
+        });
+        row.addEventListener("dragend", () => {
+          row.classList.remove("dragging");
+          dragState = null;
+          clearDropTargets();
+        });
+        const deleteBtn = actionsDiv.querySelector('[data-action="delete-tab"]');
+        deleteBtn?.addEventListener("click", async () => {
+          await send("removeTab", { groupId: group.id, tabId: tab.id });
+          await load();
+        });
+      }
       tabList.appendChild(row);
     });
 
@@ -190,19 +223,23 @@ function render(groups) {
       });
     }
 
-    restoreBtn.addEventListener("click", async () => {
-      await send("restoreGroup", { groupId: group.id });
-      await load();
-    });
+    if (!isBrowsingGroup) {
+      const restoreBtn = groupActions.querySelector('[data-action="restore-group"]');
+      const clearBtn = groupActions.querySelector('[data-action="clear-group"]');
+      restoreBtn?.addEventListener("click", async () => {
+        await send("restoreGroup", { groupId: group.id });
+        await load();
+      });
 
-    clearBtn.addEventListener("click", async () => {
-      if (!confirm(`确定要清空"${group.name}"中的所有标签吗？`)) return;
-      await send("clearGroup", { groupId: group.id });
-      await load();
-    });
+      clearBtn?.addEventListener("click", async () => {
+        if (!confirm(`确定要清空"${group.name}"中的所有标签吗？`)) return;
+        await send("clearGroup", { groupId: group.id });
+        await load();
+      });
+    }
 
     // 只有用户创建的分组才绑定删除事件（使用上面已声明的 isDefaultGroup）
-    if (!group.persistent && !isDefaultGroup) {
+    if (!group.persistent && !isDefaultGroup && !isBrowsingGroup) {
       const deleteGroupBtn = groupActions.querySelector('[data-action="delete-group"]');
       if (deleteGroupBtn) {
         deleteGroupBtn.addEventListener("click", async () => {
@@ -213,59 +250,61 @@ function render(groups) {
       }
     }
 
-    const dropZone = groupEl;
-    ["dragover", "dragenter"].forEach((evt) =>
-      dropZone.addEventListener(evt, (e) => {
-        if (!dragState) return;
-        e.preventDefault();
-        dropZone.classList.add("drop-target");
+    if (!isBrowsingGroup) {
+      const dropZone = groupEl;
+      ["dragover", "dragenter"].forEach((evt) =>
+        dropZone.addEventListener(evt, (e) => {
+          if (!dragState) return;
+          e.preventDefault();
+          dropZone.classList.add("drop-target");
 
-        const targetRow = e.target.closest(".tab-row");
-        clearInsertIndicators();
-        if (targetRow) {
-          const rect = targetRow.getBoundingClientRect();
-          const midpoint = rect.top + rect.height / 2;
-          if (e.clientY > midpoint) {
-            targetRow.classList.add("drop-after");
-          } else {
-            targetRow.classList.add("drop-before");
-          }
-        }
-      }),
-    );
-
-    ["dragleave", "drop"].forEach((evt) =>
-      dropZone.addEventListener(evt, async (e) => {
-        if (!dragState) return;
-        e.preventDefault();
-        dropZone.classList.remove("drop-target");
-        if (evt === "drop") {
           const targetRow = e.target.closest(".tab-row");
-          const targetTabId = targetRow?.dataset.tabId;
-          let insertAfter = false;
+          clearInsertIndicators();
           if (targetRow) {
             const rect = targetRow.getBoundingClientRect();
             const midpoint = rect.top + rect.height / 2;
-            insertAfter = e.clientY > midpoint;
+            if (e.clientY > midpoint) {
+              targetRow.classList.add("drop-after");
+            } else {
+              targetRow.classList.add("drop-before");
+            }
           }
+        }),
+      );
 
-          // 同组拖拽允许重新排序（支持插入到目标前/后）
-          await send("moveTab", {
-            fromGroupId: dragState.fromGroupId,
-            toGroupId: group.id,
-            tabId: dragState.tabId,
-            targetTabId,
-            insertAfter,
-          });
+      ["dragleave", "drop"].forEach((evt) =>
+        dropZone.addEventListener(evt, async (e) => {
+          if (!dragState) return;
+          e.preventDefault();
+          dropZone.classList.remove("drop-target");
+          if (evt === "drop") {
+            const targetRow = e.target.closest(".tab-row");
+            const targetTabId = targetRow?.dataset.tabId;
+            let insertAfter = false;
+            if (targetRow) {
+              const rect = targetRow.getBoundingClientRect();
+              const midpoint = rect.top + rect.height / 2;
+              insertAfter = e.clientY > midpoint;
+            }
 
-          dragState = null;
-          clearInsertIndicators();
-          await load();
-        } else {
-          clearInsertIndicators();
-        }
-      }),
-    );
+            // 同组拖拽允许重新排序（支持插入到目标前/后）
+            await send("moveTab", {
+              fromGroupId: dragState.fromGroupId,
+              toGroupId: group.id,
+              tabId: dragState.tabId,
+              targetTabId,
+              insertAfter,
+            });
+
+            dragState = null;
+            clearInsertIndicators();
+            await load();
+          } else {
+            clearInsertIndicators();
+          }
+        }),
+      );
+    }
 
     collapseBtn.addEventListener("click", () => {
       if (collapsedGroups.has(group.id)) {
@@ -306,6 +345,7 @@ chrome.runtime.onMessage.addListener((msg) => {
 chrome.runtime.onMessage.addListener((msg) => {
   if (msg?.type === "settingsChanged") {
     applyTheme(msg.settings?.theme);
+    load();
   }
 });
 

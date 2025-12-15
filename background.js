@@ -1,7 +1,8 @@
-const DEFAULT_SETTINGS = { theme: "dark", viewMode: "side" };
+const DEFAULT_SETTINGS = { theme: "dark", viewMode: "side", showBrowsingTabs: false };
 const STORAGE_KEYS = { groups: "groups", settings: "settings" };
 const PINNED_GROUP_ID = "pinned-default";
 const QUICK_GROUP_ID = "quick-default";
+const BROWSING_GROUP_ID = "browsing-live";
 
 // 缓存设置，避免在用户手势中读取存储
 let cachedSettings = DEFAULT_SETTINGS;
@@ -93,7 +94,7 @@ chrome.action.onClicked.addListener(async (tab) => {
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   const handler = messageHandlers[message.type];
   if (!handler) return;
-  handler(message)
+  handler(message, _sender)
     .then((result) => sendResponse({ ok: true, result }))
     .catch((error) => {
       console.error(error);
@@ -106,8 +107,8 @@ const messageHandlers = {
   async captureWindow() {
     return captureCurrentWindow();
   },
-  async getData() {
-    const { groups, settings } = await loadState();
+  async getData(message) {
+    const { groups, settings } = await loadState(message.windowId);
     return { groups, settings };
   },
   async setSettings(message) {
@@ -123,6 +124,7 @@ const messageHandlers = {
     return merged;
   },
   async renameGroup(message) {
+    if (message.groupId === BROWSING_GROUP_ID) throw new Error("实时分组不支持重命名");
     const { groups } = await loadState();
     const group = groups.find((g) => g.id === message.groupId);
     if (!group) throw new Error("未找到分组");
@@ -131,6 +133,7 @@ const messageHandlers = {
     return group;
   },
   async renameTab(message) {
+    if (message.groupId === BROWSING_GROUP_ID) throw new Error("实时分组不支持重命名");
     const { groups } = await loadState();
     const group = groups.find((g) => g.id === message.groupId);
     if (!group) throw new Error("未找到分组");
@@ -141,6 +144,7 @@ const messageHandlers = {
     return tab;
   },
   async removeTab(message) {
+    if (message.groupId === BROWSING_GROUP_ID) throw new Error("实时分组不支持删除");
     const { groups } = await loadState();
     const group = groups.find((g) => g.id === message.groupId);
     if (!group) throw new Error("未找到分组");
@@ -149,6 +153,7 @@ const messageHandlers = {
     return true;
   },
   async clearGroup(message) {
+    if (message.groupId === BROWSING_GROUP_ID) throw new Error("实时分组不支持清空");
     const { groups } = await loadState();
     const group = groups.find((g) => g.id === message.groupId);
     if (!group) throw new Error("未找到分组");
@@ -157,6 +162,7 @@ const messageHandlers = {
     return true;
   },
   async removeGroup(message) {
+    if (message.groupId === BROWSING_GROUP_ID) throw new Error("实时分组不支持删除");
     const { groups } = await loadState();
     const group = groups.find((g) => g.id === message.groupId);
     if (!group) throw new Error("未找到分组");
@@ -175,6 +181,23 @@ const messageHandlers = {
     if (!group) throw new Error("未找到分组");
     const tab = group.tabs.find((t) => t.id === message.tabId);
     if (!tab) throw new Error("未找到标签");
+    if (group.id === BROWSING_GROUP_ID) {
+      if (!tab.liveTabId) throw new Error("该标签已关闭");
+      try {
+        const tabInfo = await chrome.tabs.get(tab.liveTabId);
+        await chrome.tabs.update(tab.liveTabId, { active: message.active });
+        if (tabInfo?.windowId) {
+          try {
+            await chrome.windows.update(tabInfo.windowId, { focused: true });
+          } catch (_e) {
+            // ignore
+          }
+        }
+        return true;
+      } catch (_e) {
+        throw new Error("该标签已关闭");
+      }
+    }
     await chrome.tabs.create({ url: tab.url, active: message.active });
     if (!group.persistent) {
       group.tabs = group.tabs.filter((t) => t.id !== message.tabId);
@@ -210,6 +233,9 @@ const messageHandlers = {
   },
   async moveTab(message) {
     const { fromGroupId, toGroupId, tabId, targetTabId, insertAfter } = message;
+    if (fromGroupId === BROWSING_GROUP_ID || toGroupId === BROWSING_GROUP_ID) {
+      throw new Error("实时分组不支持拖拽");
+    }
     const { groups } = await loadState();
     const from = groups.find((g) => g.id === fromGroupId);
     const to = groups.find((g) => g.id === toGroupId);
@@ -259,10 +285,22 @@ const messageHandlers = {
   },
   async getUserGroups() {
     const { groups } = await loadState();
-    const userGroups = groups.filter((g) => g.id !== PINNED_GROUP_ID && g.id !== QUICK_GROUP_ID);
+    const userGroups = groups.filter(
+      (g) => g.id !== PINNED_GROUP_ID && g.id !== QUICK_GROUP_ID && g.id !== BROWSING_GROUP_ID,
+    );
     return userGroups.map((g) => ({ id: g.id, name: g.name, persistent: g.persistent || false }));
   },
+  async closeLiveTab(message) {
+    if (!message.tabId) throw new Error("缺少标签 ID");
+    try {
+      await chrome.tabs.remove(message.tabId);
+    } catch (_e) {
+      throw new Error("标签已关闭");
+    }
+    return true;
+  },
   async setGroupPersistent(message) {
+    if (message.groupId === BROWSING_GROUP_ID) throw new Error("实时分组不支持修改");
     const { groups } = await loadState();
     const group = groups.find((g) => g.id === message.groupId);
     if (!group) throw new Error("未找到分组");
@@ -325,19 +363,59 @@ async function captureActiveTab() {
   // 用户需要手动点击扩展图标打开侧栏查看收纳的标签
 }
 
-async function loadState() {
+async function loadState(targetWindowId) {
   const stored = await chrome.storage.local.get([STORAGE_KEYS.groups, STORAGE_KEYS.settings]);
-  const groups = stored[STORAGE_KEYS.groups] || [];
+  const groups = (stored[STORAGE_KEYS.groups] || []).filter((g) => g.id !== BROWSING_GROUP_ID);
   const pinnedGroup = ensurePinnedGroup(groups);
   const quickGroup = ensureQuickGroup(groups);
   const middle = groups.filter((g) => g.id !== PINNED_GROUP_ID && g.id !== QUICK_GROUP_ID);
-  const finalGroups = [pinnedGroup, ...middle, quickGroup];
   const settings = { ...DEFAULT_SETTINGS, ...(stored[STORAGE_KEYS.settings] || {}) };
+  let finalGroups = [pinnedGroup, ...middle, quickGroup];
+  if (settings.showBrowsingTabs) {
+    const browsing = await buildBrowsingGroup(targetWindowId);
+    finalGroups = [...finalGroups, browsing];
+  }
   return { groups: finalGroups, settings };
 }
 
+async function buildBrowsingGroup(targetWindowId) {
+  let windowId = targetWindowId;
+  if (!windowId) {
+    try {
+      const current = await chrome.windows.getCurrent();
+      windowId = current?.id;
+    } catch (_e) {
+      windowId = undefined;
+    }
+  }
+  const tabs = await chrome.tabs.query(windowId ? { windowId } : {});
+  const filtered = tabs.filter(
+    (t) =>
+      t.url &&
+      !t.url.startsWith("chrome://") &&
+      !t.url.startsWith(`chrome-extension://${chrome.runtime.id}`),
+  );
+  return {
+    id: BROWSING_GROUP_ID,
+    name: "正在浏览中",
+    createdAt: Number.MAX_SAFE_INTEGER,
+    persistent: true,
+    type: "browsing",
+    tabs: filtered.map((tab) => ({
+      id: `live-${tab.id}`,
+      liveTabId: tab.id,
+      windowId: tab.windowId,
+      url: tab.url,
+      title: tab.title,
+      customTitle: tab.title || tab.url,
+      favIconUrl: tab.favIconUrl || "",
+    })),
+  };
+}
+
 async function persistGroups(groups) {
-  await chrome.storage.local.set({ [STORAGE_KEYS.groups]: groups });
+  const toSave = (groups || []).filter((g) => g.id !== BROWSING_GROUP_ID);
+  await chrome.storage.local.set({ [STORAGE_KEYS.groups]: toSave });
 }
 
 function createId(prefix) {
@@ -390,6 +468,24 @@ chrome.commands.onCommand.addListener(async (command) => {
     }
   }
 });
+
+function broadcastBrowsingRefresh() {
+  if (!cachedSettings.showBrowsingTabs) return;
+  try {
+    chrome.runtime.sendMessage({ type: "reloadData" }).catch(() => {});
+  } catch (_e) {
+    // ignore
+  }
+}
+
+chrome.tabs.onCreated.addListener(() => broadcastBrowsingRefresh());
+chrome.tabs.onRemoved.addListener(() => broadcastBrowsingRefresh());
+chrome.tabs.onUpdated.addListener((_tabId, changeInfo) => {
+  if (changeInfo.status === "complete" || changeInfo.title) {
+    broadcastBrowsingRefresh();
+  }
+});
+chrome.tabs.onActivated.addListener(() => broadcastBrowsingRefresh());
 
 async function openUI(windowId) {
   const stored = await chrome.storage.local.get([STORAGE_KEYS.settings]);
