@@ -116,6 +116,10 @@ function render(groups) {
     group.tabs.forEach((tab) => {
       const row = document.createElement("div");
       row.className = "tab-row";
+      // 如果是"正在浏览中"分组且是当前活动标签，添加选中状态
+      if (isBrowsingGroup && tab.active) {
+        row.classList.add("active");
+      }
       const title = tab.customTitle || tab.title || tab.url;
       row.draggable = !isBrowsingGroup;
       row.dataset.tabId = tab.id;

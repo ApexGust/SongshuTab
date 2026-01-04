@@ -409,6 +409,7 @@ async function buildBrowsingGroup(targetWindowId) {
       title: tab.title,
       customTitle: tab.title || tab.url,
       favIconUrl: tab.favIconUrl || "",
+      active: tab.active || false,
     })),
   };
 }

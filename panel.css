@@ -188,6 +188,12 @@ select {
   background: var(--accent-weak);
 }
 
+.tab-row.active {
+  background: var(--accent-weak);
+  border-left: 3px solid var(--accent);
+  padding-left: 9px;
+}
+
 .tab-row.dragging {
   opacity: 0.6;
 }
