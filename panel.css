@@ -167,7 +167,7 @@ select {
 }
 
 .tab-list {
-  max-height: 320px;
+  max-height: none;
   overflow-y: auto;
   min-height: 32px;
   padding: 4px 0;

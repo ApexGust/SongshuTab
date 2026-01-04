@@ -313,9 +313,74 @@ function render(groups) {
         collapsedGroups.add(group.id);
       }
       load();
+      // 展开/收起后重新计算高度
+      requestAnimationFrame(() => {
+        adjustTabListHeights();
+      });
     });
 
     groupsEl.appendChild(groupEl);
+  });
+  
+  // 渲染完成后，动态计算每个分组的最大高度
+  requestAnimationFrame(() => {
+    adjustTabListHeights();
+  });
+}
+
+function adjustTabListHeights() {
+  const tabLists = document.querySelectorAll('.tab-list:not(.collapsed)');
+  if (tabLists.length === 0) return;
+  
+  // 先移除所有 max-height，让分组自然展开
+  tabLists.forEach((tabList) => {
+    tabList.style.maxHeight = 'none';
+  });
+  
+  // 等待一帧，让 DOM 更新完成
+  requestAnimationFrame(() => {
+    // 获取页面可用高度
+    const bodyHeight = window.innerHeight;
+    const mainHeader = document.querySelector('.main-header');
+    const headerHeight = mainHeader ? mainHeader.offsetHeight + 12 : 0; // 12px 是 margin-bottom
+    
+    // 计算所有分组头部的高度总和
+    let totalHeaderHeight = 0;
+    const groups = document.querySelectorAll('.group');
+    groups.forEach((group) => {
+      const header = group.querySelector('.group-header');
+      if (header) {
+        totalHeaderHeight += header.offsetHeight;
+      }
+      // 分组之间的间距
+      totalHeaderHeight += 12; // margin-bottom
+    });
+    
+    // 计算所有分组标签列表的实际高度总和
+    let totalTabListHeight = 0;
+    tabLists.forEach((tabList) => {
+      totalTabListHeight += tabList.scrollHeight;
+    });
+    
+    // 计算剩余可用高度
+    const usedHeight = headerHeight + totalHeaderHeight + 28; // 28px 是 body padding
+    const availableHeight = bodyHeight - usedHeight;
+    
+    // 如果所有分组内容的总高度小于可用高度，说明底部还有空间，不需要组内滚动
+    if (totalTabListHeight <= availableHeight) {
+      // 底部还有空间，让所有分组自然展开
+      tabLists.forEach((tabList) => {
+        tabList.style.maxHeight = 'none';
+      });
+    } else {
+      // 空间不足，需要组内滚动，按每个分组的实际内容高度比例分配
+      tabLists.forEach((tabList) => {
+        const ratio = tabList.scrollHeight / totalTabListHeight;
+        const allocatedHeight = Math.floor(availableHeight * ratio);
+        // 确保每个分组至少能显示一些内容，但不设置固定的最小值，避免突然跳变
+        tabList.style.maxHeight = `${Math.max(allocatedHeight, 50)}px`;
+      });
+    }
   });
 }
 
@@ -477,6 +542,15 @@ async function send(type, payload = {}) {
   }
   return res.result;
 }
+
+// 窗口大小变化时重新计算分组高度
+let resizeTimer;
+window.addEventListener('resize', () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => {
+    adjustTabListHeights();
+  }, 100);
+});
 
 load();
 
