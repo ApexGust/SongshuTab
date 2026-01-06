@@ -164,8 +164,8 @@ function render(groups) {
       
       const tabTitleEl = titleDiv;
       
-      // 点击标题打开标签
-      tabTitleEl.addEventListener("click", async (e) => {
+      // 点击整行打开/切换到对应标签（除按钮区域外）
+      row.addEventListener("click", async () => {
         if (tabTitleEl.contentEditable === "true") return; // 编辑模式下不打开
         await send("restoreTab", { groupId: group.id, tabId: tab.id, active: true });
         await load();
