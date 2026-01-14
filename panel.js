@@ -165,7 +165,11 @@ function render(groups) {
       const tabTitleEl = titleDiv;
       
       // 点击整行打开/切换到对应标签（除按钮区域外）
-      row.addEventListener("click", async () => {
+      row.addEventListener("click", async (e) => {
+        // 如果点击的是按钮或按钮区域，不执行打开逻辑
+        if (e.target.closest('.tab-actions') || e.target.closest('button')) {
+          return;
+        }
         if (tabTitleEl.contentEditable === "true") return; // 编辑模式下不打开
         await send("restoreTab", { groupId: group.id, tabId: tab.id, active: true });
         await load();
@@ -210,7 +214,8 @@ function render(groups) {
           clearDropTargets();
         });
         const deleteBtn = actionsDiv.querySelector('[data-action="delete-tab"]');
-        deleteBtn?.addEventListener("click", async () => {
+        deleteBtn?.addEventListener("click", async (e) => {
+          e.stopPropagation();
           await send("removeTab", { groupId: group.id, tabId: tab.id });
           await load();
         });
