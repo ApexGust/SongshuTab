@@ -162,6 +162,18 @@ select {
   justify-content: center;
 }
 
+.toggle-all-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 8px;
+  min-height: 32px;
+  margin-left: auto;
+}
+.toggle-all-btn svg {
+  display: block;
+}
+
 .tab-list.collapsed {
   display: none;
 }

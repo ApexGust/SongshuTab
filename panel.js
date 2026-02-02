@@ -1,8 +1,16 @@
 const groupsEl = document.getElementById("groups");
 const emptyEl = document.getElementById("empty");
 const addGroupBtn = document.getElementById("add-group");
+const toggleAllBtn = document.getElementById("toggle-all-groups");
 const settingsBtn = document.getElementById("open-settings");
 const BROWSING_GROUP_ID = "browsing-live";
+// 纵向弹簧 + 两端木板：图标表示当前状态（收起=压缩/展开=舒展），两图统一尺寸避免布局跳动
+const SPRING_VIEWBOX = "0 0 24 32";
+const SPRING_ICON_SIZE = 'width="10" height="24"';
+const SPRING_ICON_COMPRESSED =
+  '<svg xmlns="http://www.w3.org/2000/svg" ' + SPRING_ICON_SIZE + ' viewBox="' + SPRING_VIEWBOX + '" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="4" rx="1" fill="currentColor"/><path d="M12,10 L8,12 L12,14 L8,16 L12,18 L8,20 L12,22"/><rect x="4" y="24" width="16" height="4" rx="1" fill="currentColor"/></svg>';
+const SPRING_ICON_STRETCHED =
+  '<svg xmlns="http://www.w3.org/2000/svg" ' + SPRING_ICON_SIZE + ' viewBox="' + SPRING_VIEWBOX + '" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="0" width="16" height="4" rx="1" fill="currentColor"/><path d="M12,6 L8,10 L12,14 L8,18 L12,22 L8,26 L12,26"/><rect x="4" y="28" width="16" height="4" rx="1" fill="currentColor"/></svg>';
 const FALLBACK_ICON =
   'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><rect width="16" height="16" rx="3" fill="%23d0d0d5"/><path d="M4 5h8v1H4zm0 3h8v1H4zm0 3h5v1H4z" fill="%238c8c94"/></svg>';
 let contextMenu;
@@ -26,6 +34,24 @@ addGroupBtn.addEventListener("click", async () => {
 
 settingsBtn.addEventListener("click", () => {
   chrome.runtime.openOptionsPage();
+});
+
+toggleAllBtn.addEventListener("click", () => {
+  const groupEls = document.querySelectorAll(".group[data-group-id]");
+  const nonBrowsingIds = Array.from(groupEls)
+    .map((el) => el.dataset.groupId)
+    .filter((id) => id && id !== BROWSING_GROUP_ID);
+  if (nonBrowsingIds.length === 0) return;
+  const allCollapsed = nonBrowsingIds.every((id) => collapsedGroups.has(id));
+  if (allCollapsed) {
+    nonBrowsingIds.forEach((id) => collapsedGroups.delete(id));
+  } else {
+    nonBrowsingIds.forEach((id) => collapsedGroups.add(id));
+  }
+  load();
+  requestAnimationFrame(() => {
+    adjustTabListHeights();
+  });
 });
 
 async function load() {
@@ -331,10 +357,25 @@ function render(groups) {
     groupsEl.appendChild(groupEl);
   });
   
-  // 渲染完成后，动态计算每个分组的最大高度
+  // 渲染完成后，动态计算每个分组的最大高度，并更新一键收起/展开按钮文字
   requestAnimationFrame(() => {
     adjustTabListHeights();
+    updateToggleAllButtonText(groups);
   });
+}
+
+function updateToggleAllButtonText(groups) {
+  if (!toggleAllBtn) return;
+  const nonBrowsing = groups.filter((g) => g.id !== BROWSING_GROUP_ID);
+  if (nonBrowsing.length === 0) {
+    toggleAllBtn.style.display = "none";
+    return;
+  }
+  toggleAllBtn.style.display = "";
+  const allCollapsed = nonBrowsing.every((g) => collapsedGroups.has(g.id));
+  // 图标表示当前状态：全部收起时显示压缩弹簧，有展开时显示舒展弹簧
+  toggleAllBtn.innerHTML = allCollapsed ? SPRING_ICON_COMPRESSED : SPRING_ICON_STRETCHED;
+  toggleAllBtn.title = allCollapsed ? "一键展开" : "一键收起";
 }
 
 function adjustTabListHeights() {
