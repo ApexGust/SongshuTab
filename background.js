@@ -179,24 +179,33 @@ const messageHandlers = {
     const { groups } = await loadState();
     const group = groups.find((g) => g.id === message.groupId);
     if (!group) throw new Error("未找到分组");
-    const tab = group.tabs.find((t) => t.id === message.tabId);
+    let tab = null;
+    if (group.id === BROWSING_GROUP_ID) {
+      for (const entry of group.tabs) {
+        if (entry.type === "split" && entry.tabs) {
+          tab = entry.tabs.find((t) => t.id === message.tabId);
+          if (tab) break;
+        } else if (entry.id === message.tabId) {
+          tab = entry;
+          break;
+        }
+      }
+    } else {
+      tab = group.tabs.find((t) => t.id === message.tabId);
+    }
     if (!tab) throw new Error("未找到标签");
     if (group.id === BROWSING_GROUP_ID) {
       if (!tab.liveTabId) throw new Error("该标签已关闭");
-      try {
-        const tabInfo = await chrome.tabs.get(tab.liveTabId);
-        await chrome.tabs.update(tab.liveTabId, { active: message.active });
-        if (tabInfo?.windowId) {
+      return new Promise((resolve, reject) => {
+        setTimeout(async () => {
           try {
-            await chrome.windows.update(tabInfo.windowId, { focused: true });
+            await chrome.tabs.update(tab.liveTabId, { active: message.active });
+            resolve(true);
           } catch (_e) {
-            // ignore
+            reject(new Error("该标签已关闭"));
           }
-        }
-        return true;
-      } catch (_e) {
-        throw new Error("该标签已关闭");
-      }
+        }, 0);
+      });
     }
     await chrome.tabs.create({ url: tab.url, active: message.active });
     if (!group.persistent) {
@@ -232,29 +241,97 @@ const messageHandlers = {
     return group;
   },
   async moveTab(message) {
-    const { fromGroupId, toGroupId, tabId, targetTabId, insertAfter } = message;
-    if (fromGroupId === BROWSING_GROUP_ID || toGroupId === BROWSING_GROUP_ID) {
-      throw new Error("实时分组不支持拖拽");
-    }
-    const { groups } = await loadState();
+    const { fromGroupId, toGroupId, tabId, tabIds, targetTabId, insertAfter, windowId } = message;
+    const idsToMove = tabIds && tabIds.length ? tabIds : tabId ? [tabId] : [];
+    if (!idsToMove.length) throw new Error("缺少标签 ID");
+    const needBrowsingState = fromGroupId === BROWSING_GROUP_ID || toGroupId === BROWSING_GROUP_ID;
+    const { groups } = await loadState(needBrowsingState ? windowId : undefined);
     const from = groups.find((g) => g.id === fromGroupId);
     const to = groups.find((g) => g.id === toGroupId);
     if (!from || !to) throw new Error("目标分组不存在");
-    // 拖拽到自身：无需移动
-    if (from.id === to.id && tabId === targetTabId) return true;
-    // 预先记录同组目标索引，避免移除后索引偏移
+
+    if (fromGroupId === BROWSING_GROUP_ID && toGroupId !== BROWSING_GROUP_ID) {
+      const browsingTabs = getBrowsingTabsById(from, idsToMove);
+      if (!browsingTabs.length) throw new Error("未找到标签");
+      const newTabs = [];
+      for (const t of browsingTabs) {
+        if (!t.liveTabId) continue;
+        let info;
+        try {
+          info = await chrome.tabs.get(t.liveTabId);
+        } catch (_e) {
+          continue;
+        }
+        newTabs.push({
+          id: createId("tab"),
+          url: info.url || "",
+          title: info.title || "",
+          customTitle: "",
+          favIconUrl: info.favIconUrl || "",
+        });
+      }
+      if (!newTabs.length) throw new Error("该标签已关闭");
+      let targetIdx = to.tabs.length;
+      if (targetTabId) {
+        const i = to.tabs.findIndex((t) => t.id === targetTabId);
+        if (i >= 0) targetIdx = insertAfter ? i + 1 : i;
+      }
+      to.tabs.splice(targetIdx, 0, ...newTabs);
+      await persistGroups(groups);
+      const liveIdsToClose = browsingTabs.map((t) => t.liveTabId).filter(Boolean);
+      if (liveIdsToClose.length) await chrome.tabs.remove(liveIdsToClose);
+      return true;
+    }
+
+    // 从其他分组拖到「正在浏览中」：在新标签页打开
+    if (fromGroupId !== BROWSING_GROUP_ID && toGroupId === BROWSING_GROUP_ID) {
+      const tab = from.tabs.find((t) => t.id === idsToMove[0]);
+      if (!tab) throw new Error("未找到标签");
+      const createProps = { url: tab.url, active: false };
+      if (windowId) createProps.windowId = windowId;
+      await chrome.tabs.create(createProps);
+      if (!from.persistent) {
+        from.tabs = from.tabs.filter((t) => t.id !== idsToMove[0]);
+        await persistGroups(groups);
+      }
+      return true;
+    }
+
+    // 在「正在浏览中」内拖拽排序：移动真实标签顺序
+    if (fromGroupId === BROWSING_GROUP_ID && toGroupId === BROWSING_GROUP_ID) {
+      const browsingTabs = getBrowsingTabsById(from, idsToMove);
+      if (!browsingTabs.length) throw new Error("未找到标签");
+      const liveIds = browsingTabs.map((t) => t.liveTabId).filter(Boolean);
+      if (!liveIds.length) throw new Error("该标签已关闭");
+      const windowIdForMove = browsingTabs[0].windowId;
+      const allTabs = await chrome.tabs.query({ windowId: windowIdForMove });
+      let targetIndex = allTabs.length;
+      if (targetTabId) {
+        const targetTabs = getBrowsingTabsById(from, [targetTabId]);
+        const targetLiveId = targetTabs[0]?.liveTabId;
+        if (targetLiveId) {
+          const idx = allTabs.findIndex((t) => t.id === targetLiveId);
+          if (idx >= 0) targetIndex = insertAfter ? idx + 1 : idx;
+        }
+      }
+      await chrome.tabs.move(liveIds, { index: targetIndex });
+      return true;
+    }
+
+    // 普通分组间 / 组内拖拽
+    if (idsToMove.length > 1) throw new Error("仅支持单标签拖拽");
+    const singleId = idsToMove[0];
+    if (from.id === to.id && singleId === targetTabId) return true;
     let targetIdxInSameGroup = -1;
     if (from.id === to.id && targetTabId) {
       targetIdxInSameGroup = to.tabs.findIndex((t) => t.id === targetTabId);
     }
-    const idx = from.tabs.findIndex((t) => t.id === tabId);
+    const idx = from.tabs.findIndex((t) => t.id === singleId);
     if (idx < 0) throw new Error("未找到标签");
     const [tab] = from.tabs.splice(idx, 1);
 
-    // 组内重排或跨组插入目标位置
     if (from.id === to.id) {
       if (targetTabId && targetIdxInSameGroup >= 0) {
-        // 如果原位置在目标前面，删除后目标索引前移一位
         let adjustedIdx = idx < targetIdxInSameGroup ? targetIdxInSameGroup - 1 : targetIdxInSameGroup;
         if (insertAfter) adjustedIdx += 1;
         if (adjustedIdx < 0) adjustedIdx = 0;
@@ -378,6 +455,41 @@ async function loadState(targetWindowId) {
   return { groups: finalGroups, settings };
 }
 
+const SPLIT_VIEW_ID_NONE = -1;
+
+function getBrowsingTabsById(browsingGroup, tabIds) {
+  if (!browsingGroup || browsingGroup.id !== BROWSING_GROUP_ID || !tabIds?.length) return [];
+  const result = [];
+  for (const id of tabIds) {
+    for (const entry of browsingGroup.tabs) {
+      if (entry.type === "split" && entry.tabs) {
+        const t = entry.tabs.find((x) => x.id === id);
+        if (t) {
+          result.push(t);
+          break;
+        }
+      } else if (entry.id === id) {
+        result.push(entry);
+        break;
+      }
+    }
+  }
+  return result;
+}
+
+function toBrowsingTab(tab) {
+  return {
+    id: `live-${tab.id}`,
+    liveTabId: tab.id,
+    windowId: tab.windowId,
+    url: tab.url,
+    title: tab.title,
+    customTitle: tab.title || tab.url,
+    favIconUrl: tab.favIconUrl || "",
+    active: tab.active || false,
+  };
+}
+
 async function buildBrowsingGroup(targetWindowId) {
   let windowId = targetWindowId;
   if (!windowId) {
@@ -395,22 +507,43 @@ async function buildBrowsingGroup(targetWindowId) {
       !t.url.startsWith("chrome://") &&
       !t.url.startsWith(`chrome-extension://${chrome.runtime.id}`),
   );
+  const displayEntries = [];
+  const splitViewIdNone = chrome.tabs?.SPLIT_VIEW_ID_NONE ?? SPLIT_VIEW_ID_NONE;
+  const bySplit = new Map();
+  for (const tab of filtered) {
+    const svId = tab.splitViewId;
+    if (svId != null && svId !== splitViewIdNone) {
+      if (!bySplit.has(svId)) bySplit.set(svId, []);
+      bySplit.get(svId).push(tab);
+    }
+  }
+  const emittedSplits = new Set();
+  const sorted = [...filtered].sort((a, b) => a.index - b.index);
+  for (const tab of sorted) {
+    const svId = tab.splitViewId;
+    if (svId != null && svId !== splitViewIdNone) {
+      if (!emittedSplits.has(svId)) {
+        emittedSplits.add(svId);
+        const group = bySplit.get(svId) || [];
+        if (group.length >= 1) {
+          displayEntries.push({
+            type: "split",
+            id: `split-${svId}`,
+            tabs: group.map(toBrowsingTab),
+          });
+        }
+      }
+      continue;
+    }
+    displayEntries.push(toBrowsingTab(tab));
+  }
   return {
     id: BROWSING_GROUP_ID,
     name: "正在浏览中",
     createdAt: Number.MAX_SAFE_INTEGER,
     persistent: true,
     type: "browsing",
-    tabs: filtered.map((tab) => ({
-      id: `live-${tab.id}`,
-      liveTabId: tab.id,
-      windowId: tab.windowId,
-      url: tab.url,
-      title: tab.title,
-      customTitle: tab.title || tab.url,
-      favIconUrl: tab.favIconUrl || "",
-      active: tab.active || false,
-    })),
+    tabs: displayEntries,
   };
 }
 

@@ -285,6 +285,82 @@ select {
   border-bottom: 2px solid var(--accent);
 }
 
+/* Chrome 视图拆分：一行内并排两个标签卡片 */
+.tab-row.split-view-row {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  padding: 6px 8px;
+  height: auto;
+  min-height: 40px;
+  grid-template-columns: unset;
+}
+
+.split-view-cell {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 20px 1fr auto;
+  gap: 6px;
+  align-items: center;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.split-view-cell:hover {
+  background: var(--accent-weak);
+}
+
+.split-view-cell.active {
+  background: var(--accent-weak);
+  border-left: 3px solid var(--accent);
+  padding-left: 5px;
+}
+
+.split-view-cell img {
+  width: 18px;
+  height: 18px;
+}
+
+.split-view-cell .tab-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+.split-view-cell button {
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--danger);
+  font-size: 16px;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  border-radius: 999px;
+  opacity: 0.8;
+}
+
+.split-view-cell button:hover {
+  background: rgba(239, 68, 68, 0.15);
+  opacity: 1;
+}
+
+.split-view-divider {
+  width: 1px;
+  background: var(--border);
+  flex-shrink: 0;
+  margin: 4px 0;
+}
+
 .empty {
   text-align: center;
   color: #8c8c8c;

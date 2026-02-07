@@ -89,7 +89,7 @@ function render(groups) {
     collapseBtn.setAttribute("data-group", group.id);
     const isPinnedGroup = group.name === "标签钉子户";
     if (isBrowsingGroup) {
-      collapseBtn.textContent = "🛰";
+      collapseBtn.textContent = "👀";
     } else {
       collapseBtn.textContent = isPinnedGroup ? "📌" : isCollapsed ? "📂" : "📁";
     }
@@ -139,15 +139,75 @@ function render(groups) {
     if (isCollapsed) {
       tabList.classList.add("collapsed");
     }
-    group.tabs.forEach((tab) => {
+    group.tabs.forEach((entry) => {
+      if (isBrowsingGroup && entry.type === "split") {
+        const row = document.createElement("div");
+        row.className = "tab-row split-view-row";
+        row.dataset.groupId = group.id;
+        row.draggable = true;
+        const tabsInSplit = entry.tabs || [];
+        if (tabsInSplit.length) row.dataset.tabId = tabsInSplit[0].id;
+        tabsInSplit.forEach((tab, idx) => {
+          const cell = document.createElement("div");
+          cell.className = "split-view-cell";
+          if (tab.active) cell.classList.add("active");
+          const title = tab.customTitle || tab.title || tab.url;
+          const img = document.createElement("img");
+          img.src = tab.favIconUrl || FALLBACK_ICON;
+          img.alt = "";
+          const titleSpan = document.createElement("span");
+          titleSpan.className = "tab-title";
+          titleSpan.title = title;
+          titleSpan.textContent = title;
+          const closeBtn = document.createElement("button");
+          closeBtn.setAttribute("data-action", "close-live-tab");
+          closeBtn.title = "关闭";
+          closeBtn.textContent = "×";
+          cell.appendChild(img);
+          cell.appendChild(titleSpan);
+          cell.appendChild(closeBtn);
+          cell.addEventListener("click", async (e) => {
+            if (e.target === closeBtn || closeBtn.contains(e.target)) return;
+            document.activeElement?.blur();
+            window.getSelection()?.removeAllRanges();
+            await send("restoreTab", { groupId: group.id, tabId: tab.id, active: true });
+            setTimeout(() => load(), 200);
+          });
+          closeBtn.addEventListener("click", async (e) => {
+            e.stopPropagation();
+            if (!tab.liveTabId) return;
+            try { await send("closeLiveTab", { tabId: tab.liveTabId }); } catch (err) { console.error(err); }
+          });
+          row.appendChild(cell);
+          if (idx < tabsInSplit.length - 1) {
+            const div = document.createElement("div");
+            div.className = "split-view-divider";
+            row.appendChild(div);
+          }
+        });
+        row.addEventListener("dragstart", (e) => {
+          dragState = { tabIds: tabsInSplit.map((t) => t.id), fromGroupId: group.id };
+          e.dataTransfer.effectAllowed = "move";
+          e.dataTransfer.setData("text/plain", tabsInSplit.map((t) => t.id).join(","));
+          row.classList.add("dragging");
+        });
+        row.addEventListener("dragend", () => {
+          row.classList.remove("dragging");
+          dragState = null;
+          clearDropTargets();
+        });
+        tabList.appendChild(row);
+        return;
+      }
+
+      const tab = entry;
       const row = document.createElement("div");
       row.className = "tab-row";
-      // 如果是"正在浏览中"分组且是当前活动标签，添加选中状态
       if (isBrowsingGroup && tab.active) {
         row.classList.add("active");
       }
       const title = tab.customTitle || tab.title || tab.url;
-      row.draggable = !isBrowsingGroup;
+      row.draggable = true;
       row.dataset.tabId = tab.id;
       row.dataset.groupId = group.id;
       const img = document.createElement("img");
@@ -226,19 +286,7 @@ function render(groups) {
         });
       }
 
-      // 移除右键菜单，改用hover按钮
       if (!isBrowsingGroup) {
-        row.addEventListener("dragstart", (e) => {
-          dragState = { tabId: tab.id, fromGroupId: group.id };
-          e.dataTransfer.effectAllowed = "move";
-          e.dataTransfer.setData("text/plain", tab.id);
-          row.classList.add("dragging");
-        });
-        row.addEventListener("dragend", () => {
-          row.classList.remove("dragging");
-          dragState = null;
-          clearDropTargets();
-        });
         const deleteBtn = actionsDiv.querySelector('[data-action="delete-tab"]');
         deleteBtn?.addEventListener("click", async (e) => {
           e.stopPropagation();
@@ -246,6 +294,17 @@ function render(groups) {
           await load();
         });
       }
+      row.addEventListener("dragstart", (e) => {
+        dragState = { tabId: tab.id, fromGroupId: group.id };
+        e.dataTransfer.effectAllowed = "move";
+        e.dataTransfer.setData("text/plain", tab.id);
+        row.classList.add("dragging");
+      });
+      row.addEventListener("dragend", () => {
+        row.classList.remove("dragging");
+        dragState = null;
+        clearDropTargets();
+      });
       tabList.appendChild(row);
     });
 
@@ -285,61 +344,68 @@ function render(groups) {
       }
     }
 
-    if (!isBrowsingGroup) {
-      const dropZone = groupEl;
-      ["dragover", "dragenter"].forEach((evt) =>
-        dropZone.addEventListener(evt, (e) => {
-          if (!dragState) return;
-          e.preventDefault();
-          dropZone.classList.add("drop-target");
+    const dropZone = groupEl;
+    ["dragover", "dragenter"].forEach((evt) =>
+      dropZone.addEventListener(evt, (e) => {
+        if (!dragState) return;
+        e.preventDefault();
+        dropZone.classList.add("drop-target");
 
+        const targetRow = e.target.closest(".tab-row");
+        clearInsertIndicators();
+        if (targetRow) {
+          const rect = targetRow.getBoundingClientRect();
+          const midpoint = rect.top + rect.height / 2;
+          if (e.clientY > midpoint) {
+            targetRow.classList.add("drop-after");
+          } else {
+            targetRow.classList.add("drop-before");
+          }
+        }
+      }),
+    );
+
+    ["dragleave", "drop"].forEach((evt) =>
+      dropZone.addEventListener(evt, async (e) => {
+        if (!dragState) return;
+        e.preventDefault();
+        dropZone.classList.remove("drop-target");
+        if (evt === "drop") {
           const targetRow = e.target.closest(".tab-row");
-          clearInsertIndicators();
+          const targetTabId = targetRow?.dataset.tabId;
+          let insertAfter = false;
           if (targetRow) {
             const rect = targetRow.getBoundingClientRect();
             const midpoint = rect.top + rect.height / 2;
-            if (e.clientY > midpoint) {
-              targetRow.classList.add("drop-after");
-            } else {
-              targetRow.classList.add("drop-before");
-            }
+            insertAfter = e.clientY > midpoint;
           }
-        }),
-      );
 
-      ["dragleave", "drop"].forEach((evt) =>
-        dropZone.addEventListener(evt, async (e) => {
-          if (!dragState) return;
-          e.preventDefault();
-          dropZone.classList.remove("drop-target");
-          if (evt === "drop") {
-            const targetRow = e.target.closest(".tab-row");
-            const targetTabId = targetRow?.dataset.tabId;
-            let insertAfter = false;
-            if (targetRow) {
-              const rect = targetRow.getBoundingClientRect();
-              const midpoint = rect.top + rect.height / 2;
-              insertAfter = e.clientY > midpoint;
-            }
-
-            // 同组拖拽允许重新排序（支持插入到目标前/后）
-            await send("moveTab", {
-              fromGroupId: dragState.fromGroupId,
-              toGroupId: group.id,
-              tabId: dragState.tabId,
-              targetTabId,
-              insertAfter,
-            });
-
-            dragState = null;
-            clearInsertIndicators();
-            await load();
+          const payload = {
+            fromGroupId: dragState.fromGroupId,
+            toGroupId: group.id,
+            targetTabId,
+            insertAfter,
+          };
+          if (dragState.tabIds) {
+            payload.tabIds = dragState.tabIds;
           } else {
-            clearInsertIndicators();
+            payload.tabId = dragState.tabId;
           }
-        }),
-      );
-    }
+          const involvesBrowsing = dragState.fromGroupId === BROWSING_GROUP_ID || group.id === BROWSING_GROUP_ID;
+          if (involvesBrowsing) {
+            const win = await chrome.windows.getCurrent();
+            payload.windowId = win?.id;
+          }
+          await send("moveTab", payload);
+
+          dragState = null;
+          clearInsertIndicators();
+          await load();
+        } else {
+          clearInsertIndicators();
+        }
+      }),
+    );
 
     collapseBtn.addEventListener("click", () => {
       if (collapsedGroups.has(group.id)) {
