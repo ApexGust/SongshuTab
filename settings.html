@@ -47,6 +47,25 @@
       </section>
 
       <section class="card">
+        <h3>默认分组名称</h3>
+        <p class="hint">默认分组不能在侧栏中双击改名，只能在这里修改</p>
+        <div class="default-group-names">
+          <label class="name-field" for="pinned-group-name">
+            <span>固定保留组</span>
+            <input type="text" id="pinned-group-name" maxlength="30" />
+          </label>
+          <label class="name-field" for="quick-group-name">
+            <span>快捷收纳组</span>
+            <input type="text" id="quick-group-name" maxlength="30" />
+          </label>
+          <label class="name-field" for="browsing-group-name">
+            <span>正在浏览组</span>
+            <input type="text" id="browsing-group-name" maxlength="30" />
+          </label>
+        </div>
+      </section>
+
+      <section class="card">
         <div class="row">
           <label>快捷键</label>
           <div style="display: flex; align-items: center; gap: 8px;">
@@ -62,7 +81,7 @@
 
       <section class="card">
         <h3>用户分组设置</h3>
-        <p class="hint">管理自建分组：点击标签后是否保留在列表中</p>
+        <p class="hint">管理自建分组：设置点击标签后是否保留，或删除不再需要的分组</p>
         <div id="user-groups" class="groups-list">
           <div class="empty-groups">暂无用户分组</div>
         </div>
@@ -72,4 +91,3 @@
     <script src="settings.js"></script>
   </body>
 </html>
-

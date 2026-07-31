@@ -1,8 +1,142 @@
-const DEFAULT_SETTINGS = { theme: "dark", viewMode: "side", showBrowsingTabs: false };
+const DEFAULT_SETTINGS = {
+  theme: "dark",
+  viewMode: "side",
+  showBrowsingTabs: false,
+  pinnedGroupName: "标签钉子户",
+  quickGroupName: "待领养标签",
+  browsingGroupName: "正在浏览中",
+};
 const STORAGE_KEYS = { groups: "groups", settings: "settings" };
 const PINNED_GROUP_ID = "pinned-default";
 const QUICK_GROUP_ID = "quick-default";
 const BROWSING_GROUP_ID = "browsing-live";
+
+function isDefaultGroupId(groupId) {
+  return groupId === PINNED_GROUP_ID || groupId === QUICK_GROUP_ID || groupId === BROWSING_GROUP_ID;
+}
+
+// 侧栏文档对跨域 favicon 可能触发 COEP/CORP（NotSameOrigin），在 SW 中 fetch 可绕过网页嵌入限制
+const FAVICON_DATA_URL_CACHE_MAX = 200;
+const FAVICON_MAX_BYTES = 1024 * 1024;
+const FAVICON_FAILURE_TTL_MS = 5 * 60 * 1000;
+const faviconDataUrlCache = new Map();
+const faviconFailureCache = new Map();
+const faviconInflight = new Map();
+
+function trimFaviconCache(cache) {
+  while (cache.size > FAVICON_DATA_URL_CACHE_MAX) {
+    const k = cache.keys().next().value;
+    cache.delete(k);
+  }
+}
+
+function rememberFaviconFailure(url) {
+  faviconFailureCache.set(url, Date.now() + FAVICON_FAILURE_TTL_MS);
+  trimFaviconCache(faviconFailureCache);
+}
+
+async function readResponseWithLimit(response) {
+  const declaredLength = Number(response.headers.get("content-length"));
+  if (Number.isFinite(declaredLength) && declaredLength > FAVICON_MAX_BYTES) {
+    throw new Error("favicon response is too large");
+  }
+
+  if (!response.body) {
+    const buffer = await response.arrayBuffer();
+    if (buffer.byteLength > FAVICON_MAX_BYTES) throw new Error("favicon response is too large");
+    return buffer;
+  }
+
+  const reader = response.body.getReader();
+  const chunks = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > FAVICON_MAX_BYTES) {
+        await reader.cancel();
+        throw new Error("favicon response is too large");
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes.buffer;
+}
+
+function arrayBufferToDataUrl(buffer, mimeType) {
+  const bytes = new Uint8Array(buffer);
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunkSize));
+  }
+  let mime = "image/x-icon";
+  if (mimeType && /^image\//i.test(mimeType)) {
+    mime = mimeType.split(";")[0].trim();
+  }
+  return `data:${mime};base64,${btoa(binary)}`;
+}
+
+async function fetchFaviconAsDataUrl(url) {
+  const trimmed = (url || "").trim();
+  if (!trimmed.startsWith("http://") && !trimmed.startsWith("https://")) {
+    return "";
+  }
+  if (faviconDataUrlCache.has(trimmed)) {
+    return faviconDataUrlCache.get(trimmed);
+  }
+  const failureExpiresAt = faviconFailureCache.get(trimmed);
+  if (failureExpiresAt && failureExpiresAt > Date.now()) {
+    return "";
+  }
+  faviconFailureCache.delete(trimmed);
+  if (faviconInflight.has(trimmed)) {
+    return faviconInflight.get(trimmed);
+  }
+  const task = (async () => {
+    try {
+      // 不用 force-cache：侧栏/img 试过的 404 可能被 HTTP 缓存，再 fetch 会误取到空结果
+      const res = await fetch(trimmed, { cache: "no-cache" });
+      if (!res.ok) {
+        rememberFaviconFailure(trimmed);
+        return "";
+      }
+      const contentType = (res.headers.get("content-type") || "").split(";")[0].trim().toLowerCase();
+      if (!contentType.startsWith("image/") && contentType !== "application/octet-stream") {
+        rememberFaviconFailure(trimmed);
+        return "";
+      }
+      const buf = await readResponseWithLimit(res);
+      if (!buf.byteLength) {
+        rememberFaviconFailure(trimmed);
+        return "";
+      }
+      const dataUrl = arrayBufferToDataUrl(buf, contentType);
+      faviconDataUrlCache.set(trimmed, dataUrl);
+      faviconFailureCache.delete(trimmed);
+      trimFaviconCache(faviconDataUrlCache);
+      return dataUrl;
+    } catch (_e) {
+      rememberFaviconFailure(trimmed);
+      return "";
+    } finally {
+      faviconInflight.delete(trimmed);
+    }
+  })();
+  faviconInflight.set(trimmed, task);
+  return task;
+}
 
 // 缓存设置，避免在用户手势中读取存储
 let cachedSettings = DEFAULT_SETTINGS;
@@ -111,6 +245,9 @@ const messageHandlers = {
     const { groups, settings } = await loadState(message.windowId);
     return { groups, settings };
   },
+  async getFaviconDataUrl(message) {
+    return fetchFaviconAsDataUrl(message.url);
+  },
   async setSettings(message) {
     const current = await chrome.storage.local.get(STORAGE_KEYS.settings);
     const merged = { ...(current[STORAGE_KEYS.settings] || DEFAULT_SETTINGS), ...message.settings };
@@ -124,7 +261,7 @@ const messageHandlers = {
     return merged;
   },
   async renameGroup(message) {
-    if (message.groupId === BROWSING_GROUP_ID) throw new Error("实时分组不支持重命名");
+    if (isDefaultGroupId(message.groupId)) throw new Error("默认分组请在设置页重命名");
     const { groups } = await loadState();
     const group = groups.find((g) => g.id === message.groupId);
     if (!group) throw new Error("未找到分组");
@@ -167,10 +304,9 @@ const messageHandlers = {
     const group = groups.find((g) => g.id === message.groupId);
     if (!group) throw new Error("未找到分组");
     // 保护默认分组，不允许删除
-    if (group.id === PINNED_GROUP_ID || group.id === QUICK_GROUP_ID) {
+    if (isDefaultGroupId(group.id)) {
       throw new Error("不能删除默认分组");
     }
-    if (group.persistent) throw new Error("不能删除固定分组");
     const next = groups.filter((g) => g.id !== message.groupId);
     await persistGroups(next);
     return true;
@@ -420,8 +556,8 @@ async function captureCurrentWindow() {
 async function captureActiveTab() {
   const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!activeTab || !activeTab.url) throw new Error("当前无可收纳标签");
-  const { groups } = await loadState();
-  const quick = ensureQuickGroup(groups);
+  const { groups, settings } = await loadState();
+  const quick = ensureQuickGroup(groups, settings.quickGroupName);
   quick.tabs.unshift({
     id: createId("tab"),
     url: activeTab.url,
@@ -443,13 +579,13 @@ async function captureActiveTab() {
 async function loadState(targetWindowId) {
   const stored = await chrome.storage.local.get([STORAGE_KEYS.groups, STORAGE_KEYS.settings]);
   const groups = (stored[STORAGE_KEYS.groups] || []).filter((g) => g.id !== BROWSING_GROUP_ID);
-  const pinnedGroup = ensurePinnedGroup(groups);
-  const quickGroup = ensureQuickGroup(groups);
-  const middle = groups.filter((g) => g.id !== PINNED_GROUP_ID && g.id !== QUICK_GROUP_ID);
   const settings = { ...DEFAULT_SETTINGS, ...(stored[STORAGE_KEYS.settings] || {}) };
+  const pinnedGroup = ensurePinnedGroup(groups, settings.pinnedGroupName);
+  const quickGroup = ensureQuickGroup(groups, settings.quickGroupName);
+  const middle = groups.filter((g) => g.id !== PINNED_GROUP_ID && g.id !== QUICK_GROUP_ID);
   let finalGroups = [pinnedGroup, ...middle, quickGroup];
   if (settings.showBrowsingTabs) {
-    const browsing = await buildBrowsingGroup(targetWindowId);
+    const browsing = await buildBrowsingGroup(targetWindowId, settings.browsingGroupName);
     finalGroups = [...finalGroups, browsing];
   }
   return { groups: finalGroups, settings };
@@ -490,7 +626,7 @@ function toBrowsingTab(tab) {
   };
 }
 
-async function buildBrowsingGroup(targetWindowId) {
+async function buildBrowsingGroup(targetWindowId, groupName) {
   let windowId = targetWindowId;
   if (!windowId) {
     try {
@@ -539,7 +675,7 @@ async function buildBrowsingGroup(targetWindowId) {
   }
   return {
     id: BROWSING_GROUP_ID,
-    name: "正在浏览中",
+    name: groupName || DEFAULT_SETTINGS.browsingGroupName,
     createdAt: Number.MAX_SAFE_INTEGER,
     persistent: true,
     type: "browsing",
@@ -557,37 +693,37 @@ function createId(prefix) {
   return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
-function ensureQuickGroup(groups) {
+function ensureQuickGroup(groups, groupName) {
   let quick = groups.find((g) => g.id === QUICK_GROUP_ID);
   if (!quick) {
     quick = {
       id: QUICK_GROUP_ID,
-      name: "待领养标签",
+      name: groupName || DEFAULT_SETTINGS.quickGroupName,
       createdAt: 0,
       persistent: false, // 分组内的标签点击后会被删除（不保留）
       tabs: [],
     };
     groups.push(quick);
   } else {
-    quick.name = "待领养标签";
+    quick.name = groupName || DEFAULT_SETTINGS.quickGroupName;
     quick.persistent = false; // 分组内的标签点击后会被删除（不保留）
   }
   return quick;
 }
 
-function ensurePinnedGroup(groups) {
+function ensurePinnedGroup(groups, groupName) {
   let pinned = groups.find((g) => g.id === PINNED_GROUP_ID);
   if (!pinned) {
     pinned = {
       id: PINNED_GROUP_ID,
-      name: "标签钉子户",
+      name: groupName || DEFAULT_SETTINGS.pinnedGroupName,
       createdAt: 0,
       persistent: true,
       tabs: [],
     };
     groups.unshift(pinned);
   } else {
-    pinned.name = "标签钉子户";
+    pinned.name = groupName || DEFAULT_SETTINGS.pinnedGroupName;
     pinned.persistent = true;
   }
   return pinned;
@@ -661,4 +797,3 @@ async function openUI(windowId) {
     console.error("sidePanel.open failed", e);
   }
 }
-

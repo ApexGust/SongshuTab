@@ -97,8 +97,75 @@ h3 {
 }
 
 .group-name {
+  min-width: 0;
+  overflow: hidden;
+  flex: 1;
   font-size: 14px;
   color: var(--text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.group-controls {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-shrink: 0;
+}
+
+.delete-group-btn {
+  padding: 6px 10px;
+  border: 1px solid #f1b8b8;
+  border-radius: 7px;
+  background: #fff7f7;
+  color: #c53f3f;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
+}
+
+.delete-group-btn:hover {
+  border-color: #df6666;
+  background: #fff0f0;
+  color: #a92525;
+}
+
+.delete-group-btn:disabled {
+  cursor: wait;
+  opacity: 0.55;
+}
+
+.default-group-names {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.name-field {
+  display: grid;
+  grid-template-columns: 110px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  font-size: 13px;
+}
+
+.name-field input {
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card);
+  color: var(--text);
+  font: inherit;
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.name-field input:focus {
+  border-color: #5c7bff;
+  box-shadow: 0 0 0 3px rgba(92, 123, 255, 0.12);
 }
 
 .empty-groups {
@@ -215,4 +282,3 @@ input:checked + .slider:before {
   font-weight: 600;
   border: 1px solid #6b7280;
 }
-

@@ -11,9 +11,103 @@ const SPRING_ICON_COMPRESSED =
   '<svg xmlns="http://www.w3.org/2000/svg" ' + SPRING_ICON_SIZE + ' viewBox="' + SPRING_VIEWBOX + '" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="4" rx="1" fill="currentColor"/><path d="M12,10 L8,12 L12,14 L8,16 L12,18 L8,20 L12,22"/><rect x="4" y="24" width="16" height="4" rx="1" fill="currentColor"/></svg>';
 const SPRING_ICON_STRETCHED =
   '<svg xmlns="http://www.w3.org/2000/svg" ' + SPRING_ICON_SIZE + ' viewBox="' + SPRING_VIEWBOX + '" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="0" width="16" height="4" rx="1" fill="currentColor"/><path d="M12,6 L8,10 L12,14 L8,18 L12,22 L8,26 L12,26"/><rect x="4" y="28" width="16" height="4" rx="1" fill="currentColor"/></svg>';
+const GROUP_ICON_PIN =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 4 5 5-3 1-4 4 1 4-1 1-4-4-4 4"/><path d="m9 15-5 5"/></svg>';
+const GROUP_ICON_FOLDER_CLOSED =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg>';
+const GROUP_ICON_FOLDER_OPEN =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v1"/><path d="M4 19h14a2 2 0 0 0 1.9-1.4l1.4-4A2 2 0 0 0 19.4 11H7a2 2 0 0 0-1.9 1.4L3 18.5"/></svg>';
+const GROUP_ICON_BROWSING =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"/><circle cx="12" cy="12" r="2.5"/></svg>';
 const FALLBACK_ICON =
   'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><rect width="16" height="16" rx="3" fill="%23d0d0d5"/><path d="M4 5h8v1H4zm0 3h8v1H4zm0 3h5v1H4z" fill="%238c8c94"/></svg>';
 let contextMenu;
+
+// 无标准 favicon 或缓存脏数据时，按站点补常见路径（可继续按需追加）
+const EXTRA_FAVICON_PATHS_BY_HOST = {
+  "clawhub.ai": ["/clawd-logo.png"],
+};
+
+function guessFaviconUrls(pageUrl) {
+  const list = [];
+  try {
+    const u = new URL(pageUrl);
+    if (u.protocol !== "http:" && u.protocol !== "https:") return list;
+    const host = u.hostname.replace(/^www\./i, "");
+    list.push(`${u.origin}/favicon.ico`);
+    for (const p of EXTRA_FAVICON_PATHS_BY_HOST[host] || []) {
+      const full = `${u.origin}${p}`;
+      if (!list.includes(full)) list.push(full);
+    }
+    const apple = `${u.origin}/apple-touch-icon.png`;
+    if (!list.includes(apple)) list.push(apple);
+  } catch (_e) {
+    /* ignore */
+  }
+  return list;
+}
+
+function chromeFaviconUrl(pageUrl) {
+  try {
+    new URL(pageUrl);
+    const url = new URL(chrome.runtime.getURL("/_favicon/"));
+    url.searchParams.set("pageUrl", pageUrl);
+    url.searchParams.set("size", "32");
+    return url.toString();
+  } catch (_e) {
+    return "";
+  }
+}
+
+/** 优先使用标签自身图标和 Chrome favicon 缓存；跨域 img 失败时由后台在受限大小内转成 data URL。 */
+function bindTabFavicon(img, favIconUrl, pageUrl) {
+  const candidates = [];
+  const trimmed = (favIconUrl || "").trim();
+  if (/^data:image\//i.test(trimmed) || /^https?:\/\//i.test(trimmed)) candidates.push(trimmed);
+  const chromeFavicon = chromeFaviconUrl(pageUrl || "");
+  if (chromeFavicon && !candidates.includes(chromeFavicon)) candidates.push(chromeFavicon);
+  for (const u of guessFaviconUrls(pageUrl || "")) {
+    if (!candidates.includes(u)) candidates.push(u);
+  }
+
+  if (!candidates.length) {
+    img.src = FALLBACK_ICON;
+    return;
+  }
+
+  const tryFromIndex = (i) => {
+    if (i >= candidates.length) {
+      img.src = FALLBACK_ICON;
+      return;
+    }
+    const url = candidates[i];
+    img.onload = () => {
+      img.onload = null;
+      img.onerror = null;
+    };
+    img.onerror = () => {
+      img.onload = null;
+      img.onerror = null;
+      void (async () => {
+        if (/^https?:\/\//i.test(url)) {
+          try {
+            const dataUrl = await send("getFaviconDataUrl", { url });
+            if (dataUrl) {
+              img.src = dataUrl;
+              return;
+            }
+          } catch (_e) {
+            /* try next */
+          }
+        }
+        tryFromIndex(i + 1);
+      })();
+    };
+    img.src = url;
+  };
+
+  tryFromIndex(0);
+}
 let dragState = null;
 const collapsedGroups = new Set();
 
@@ -75,7 +169,7 @@ function render(groups) {
     groupEl.dataset.groupId = group.id;
     const isCollapsed = collapsedGroups.has(group.id);
     // 判断是否为默认分组
-    const isDefaultGroup = group.id === "pinned-default" || group.id === "quick-default";
+    const isDefaultGroup = group.id === "pinned-default" || group.id === "quick-default" || group.id === BROWSING_GROUP_ID;
     const isBrowsingGroup = group.id === BROWSING_GROUP_ID;
     const header = document.createElement("div");
     header.className = "group-header";
@@ -87,15 +181,15 @@ function render(groups) {
     collapseBtn.className = "icon-btn collapse-btn";
     collapseBtn.title = "收起/展开";
     collapseBtn.setAttribute("data-group", group.id);
-    const isPinnedGroup = group.name === "标签钉子户";
+    const isPinnedGroup = group.id === "pinned-default";
     if (isBrowsingGroup) {
-      collapseBtn.textContent = "👀";
+      collapseBtn.innerHTML = GROUP_ICON_BROWSING;
     } else {
-      collapseBtn.textContent = isPinnedGroup ? "📌" : isCollapsed ? "📂" : "📁";
+      collapseBtn.innerHTML = isPinnedGroup ? GROUP_ICON_PIN : isCollapsed ? GROUP_ICON_FOLDER_CLOSED : GROUP_ICON_FOLDER_OPEN;
     }
     
     const groupTitle = document.createElement("div");
-    groupTitle.className = `group-title ${group.persistent ? 'no-edit' : ''}`;
+    groupTitle.className = `group-title ${isDefaultGroup ? 'no-edit' : ''}`;
     groupTitle.title = group.name;
     groupTitle.contentEditable = "false";
     groupTitle.setAttribute("data-group-id", group.id);
@@ -109,22 +203,14 @@ function render(groups) {
     if (!isBrowsingGroup) {
       const restoreBtn = document.createElement("button");
       restoreBtn.setAttribute("data-action", "restore-group");
-      restoreBtn.textContent = "全部打开";
+      restoreBtn.textContent = "Open all";
       
       const clearBtn = document.createElement("button");
       clearBtn.setAttribute("data-action", "clear-group");
-      clearBtn.textContent = "清空组";
+      clearBtn.textContent = "Clear";
       
       groupActions.appendChild(restoreBtn);
       groupActions.appendChild(clearBtn);
-      
-      // 只有用户创建的分组才显示删除按钮（默认分组不显示）
-      if (!group.persistent && !isDefaultGroup) {
-        const deleteBtn = document.createElement("button");
-        deleteBtn.setAttribute("data-action", "delete-group");
-        deleteBtn.textContent = "删除组";
-        groupActions.appendChild(deleteBtn);
-      }
     }
     
     header.appendChild(groupLeft);
@@ -153,7 +239,7 @@ function render(groups) {
           if (tab.active) cell.classList.add("active");
           const title = tab.customTitle || tab.title || tab.url;
           const img = document.createElement("img");
-          img.src = tab.favIconUrl || FALLBACK_ICON;
+          bindTabFavicon(img, tab.favIconUrl, tab.url);
           img.alt = "";
           const titleSpan = document.createElement("span");
           titleSpan.className = "tab-title";
@@ -211,7 +297,7 @@ function render(groups) {
       row.dataset.tabId = tab.id;
       row.dataset.groupId = group.id;
       const img = document.createElement("img");
-      img.src = tab.favIconUrl || FALLBACK_ICON;
+      bindTabFavicon(img, tab.favIconUrl, tab.url);
       img.alt = "";
       
       const titleDiv = document.createElement("div");
@@ -308,9 +394,9 @@ function render(groups) {
       tabList.appendChild(row);
     });
 
-    // 分组标题双击编辑（只有非固定组可以编辑）
+    // 三个默认分组只能在设置页改名，自建分组始终可以双击编辑
     const groupTitleEl = groupEl.querySelector(".group-title");
-    if (groupTitleEl && !group.persistent) {
+    if (groupTitleEl && !isDefaultGroup) {
       groupTitleEl.addEventListener("dblclick", (e) => {
         e.stopPropagation();
         startEditGroupTitle(groupTitleEl, group.id);
@@ -330,18 +416,6 @@ function render(groups) {
         await send("clearGroup", { groupId: group.id });
         await load();
       });
-    }
-
-    // 只有用户创建的分组才绑定删除事件（使用上面已声明的 isDefaultGroup）
-    if (!group.persistent && !isDefaultGroup && !isBrowsingGroup) {
-      const deleteGroupBtn = groupActions.querySelector('[data-action="delete-group"]');
-      if (deleteGroupBtn) {
-        deleteGroupBtn.addEventListener("click", async () => {
-          if (!confirm(`确定要删除"${group.name}"吗？此操作不可恢复。`)) return;
-          await send("removeGroup", { groupId: group.id });
-          await load();
-        });
-      }
     }
 
     const dropZone = groupEl;
@@ -457,19 +531,23 @@ function adjustTabListHeights() {
   requestAnimationFrame(() => {
     // 获取页面可用高度
     const bodyHeight = window.innerHeight;
+    const toPixels = (value) => Number.parseFloat(value) || 0;
+    const bodyStyle = getComputedStyle(document.body);
+    const bodyVerticalPadding = toPixels(bodyStyle.paddingTop) + toPixels(bodyStyle.paddingBottom);
     const mainHeader = document.querySelector('.main-header');
-    const headerHeight = mainHeader ? mainHeader.offsetHeight + 12 : 0; // 12px 是 margin-bottom
+    const mainHeaderStyle = mainHeader ? getComputedStyle(mainHeader) : null;
+    const headerHeight = mainHeader ? mainHeader.offsetHeight + toPixels(mainHeaderStyle.marginBottom) : 0;
     
-    // 计算所有分组头部的高度总和
-    let totalHeaderHeight = 0;
+    // 计算所有分组头部、外边框和组间距的总高度，避免样式调整后继续依赖旧的固定像素值
+    let groupChromeHeight = 0;
     const groups = document.querySelectorAll('.group');
     groups.forEach((group) => {
       const header = group.querySelector('.group-header');
       if (header) {
-        totalHeaderHeight += header.offsetHeight;
+        groupChromeHeight += header.offsetHeight;
       }
-      // 分组之间的间距
-      totalHeaderHeight += 12; // margin-bottom
+      const groupStyle = getComputedStyle(group);
+      groupChromeHeight += toPixels(groupStyle.borderTopWidth) + toPixels(groupStyle.borderBottomWidth) + toPixels(groupStyle.marginBottom);
     });
     
     // 计算所有分组标签列表的实际高度总和
@@ -479,7 +557,7 @@ function adjustTabListHeights() {
     });
     
     // 计算剩余可用高度
-    const usedHeight = headerHeight + totalHeaderHeight + 28; // 28px 是 body padding
+    const usedHeight = bodyVerticalPadding + headerHeight + groupChromeHeight;
     const availableHeight = bodyHeight - usedHeight;
     
     // 如果所有分组内容的总高度小于可用高度，说明底部还有空间，不需要组内滚动
@@ -493,8 +571,8 @@ function adjustTabListHeights() {
       tabLists.forEach((tabList) => {
         const ratio = tabList.scrollHeight / totalTabListHeight;
         const allocatedHeight = Math.floor(availableHeight * ratio);
-        // 确保每个分组至少能显示一些内容，但不设置固定的最小值，避免突然跳变
-        tabList.style.maxHeight = `${Math.max(allocatedHeight, 50)}px`;
+        // 至少保留一行标签的可视高度
+        tabList.style.maxHeight = `${Math.max(allocatedHeight, 36)}px`;
       });
     }
   });
@@ -669,4 +747,3 @@ window.addEventListener('resize', () => {
 });
 
 load();
-
