@@ -57,7 +57,7 @@ OneTab就是这样，足够简单。不过有些功能不满足我的需求，�
   - 用户分组持久化：为各自建分组设置「保留/不保留」行为。
   - 快捷键：默认 `Ctrl/Command + E`，可在浏览器「快捷键」页面调整。
 
-![设置页面](./docs/images/设置页面.png)
+![SongShuTab 新版设置页面](./docs/images/设置v2.png)
 
 ## 安装
 1. 下载源码：`git clone https://github.com/ApexGust/SongshuTab.git`
