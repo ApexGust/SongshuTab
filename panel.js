@@ -2,8 +2,11 @@ const groupsEl = document.getElementById("groups");
 const emptyEl = document.getElementById("empty");
 const addGroupBtn = document.getElementById("add-group");
 const toggleAllBtn = document.getElementById("toggle-all-groups");
+const resetGroupHeightsBtn = document.getElementById("reset-group-heights");
 const settingsBtn = document.getElementById("open-settings");
 const BROWSING_GROUP_ID = "browsing-live";
+const GROUP_HEIGHTS_KEY = "groupHeights";
+const MIN_GROUP_CONTENT_HEIGHT = 29;
 // 纵向弹簧 + 两端木板：图标表示当前状态（收起=压缩/展开=舒展），两图统一尺寸避免布局跳动
 const SPRING_VIEWBOX = "0 0 24 32";
 const SPRING_ICON_SIZE = 'width="10" height="24"';
@@ -22,6 +25,8 @@ const GROUP_ICON_BROWSING =
 const FALLBACK_ICON =
   'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><rect width="16" height="16" rx="3" fill="%23d0d0d5"/><path d="M4 5h8v1H4zm0 3h8v1H4zm0 3h5v1H4z" fill="%238c8c94"/></svg>';
 let contextMenu;
+let groupHeights = {};
+let groupHeightsLoadPromise;
 
 // 无标准 favicon 或缓存脏数据时，按站点补常见路径（可继续按需追加）
 const EXTRA_FAVICON_PATHS_BY_HOST = {
@@ -130,6 +135,14 @@ settingsBtn.addEventListener("click", () => {
   chrome.runtime.openOptionsPage();
 });
 
+resetGroupHeightsBtn.addEventListener("click", async () => {
+  await groupHeightsLoadPromise;
+  groupHeights = {};
+  groupHeightsLoadPromise = Promise.resolve();
+  await chrome.storage.local.remove(GROUP_HEIGHTS_KEY);
+  await load();
+});
+
 toggleAllBtn.addEventListener("click", () => {
   const groupEls = document.querySelectorAll(".group[data-group-id]");
   const nonBrowsingIds = Array.from(groupEls)
@@ -150,9 +163,101 @@ toggleAllBtn.addEventListener("click", () => {
 
 async function load() {
   const currentWindow = await chrome.windows.getCurrent();
-  const res = await send("getData", { windowId: currentWindow.id });
+  if (!groupHeightsLoadPromise) {
+    groupHeightsLoadPromise = chrome.storage.local.get(GROUP_HEIGHTS_KEY).then((stored) => {
+      groupHeights = stored[GROUP_HEIGHTS_KEY] || {};
+    });
+  }
+  const [res] = await Promise.all([send("getData", { windowId: currentWindow.id }), groupHeightsLoadPromise]);
   applyTheme(res.settings?.theme);
   render(res.groups);
+}
+
+function setTabListHeight(tabList, height) {
+  const nextHeight = Math.max(MIN_GROUP_CONTENT_HEIGHT, Math.round(height));
+  tabList.dataset.userHeight = "true";
+  tabList.style.height = `${nextHeight}px`;
+  tabList.style.maxHeight = `${nextHeight}px`;
+  return nextHeight;
+}
+
+function applyStoredGroupHeight(tabList, groupId) {
+  const height = Number(groupHeights[groupId]);
+  if (Number.isFinite(height) && height >= MIN_GROUP_CONTENT_HEIGHT) {
+    setTabListHeight(tabList, height);
+  }
+}
+
+function persistGroupHeights() {
+  void chrome.storage.local.set({ [GROUP_HEIGHTS_KEY]: { ...groupHeights } }).catch((err) => console.error("保存分组高度失败", err));
+}
+
+function createGroupResizer(upperGroupId, lowerGroupId, disabled) {
+  const resizer = document.createElement("button");
+  resizer.type = "button";
+  resizer.className = "group-resizer";
+  resizer.disabled = disabled;
+  resizer.title = disabled ? "展开相邻分组后可调整高度" : lowerGroupId ? "拖动调整相邻分组高度，双击恢复自动高度" : "拖动调整最后分组高度，双击恢复自动高度";
+  resizer.setAttribute("aria-label", lowerGroupId ? "调整相邻分组高度" : "调整最后分组高度");
+
+  resizer.addEventListener("pointerdown", (event) => {
+    if (resizer.disabled || event.button !== 0) return;
+    const upperList = groupsEl.querySelector(`[data-group-id="${CSS.escape(upperGroupId)}"] .tab-list`);
+    const lowerList = lowerGroupId ? groupsEl.querySelector(`[data-group-id="${CSS.escape(lowerGroupId)}"] .tab-list`) : null;
+    if (!upperList || upperList.classList.contains("collapsed") || (lowerGroupId && (!lowerList || lowerList.classList.contains("collapsed")))) return;
+
+    event.preventDefault();
+    const startY = event.clientY;
+    const upperStartHeight = upperList.offsetHeight;
+    const lowerStartHeight = lowerList?.offsetHeight || 0;
+    const combinedHeight = upperStartHeight + lowerStartHeight;
+    resizer.setPointerCapture(event.pointerId);
+    resizer.classList.add("resizing");
+    document.body.classList.add("resizing-groups");
+
+    const onPointerMove = (moveEvent) => {
+      const requestedUpperHeight = upperStartHeight + moveEvent.clientY - startY;
+      if (!lowerList) {
+        groupHeights[upperGroupId] = setTabListHeight(upperList, requestedUpperHeight);
+        return;
+      }
+      const upperHeight = Math.min(Math.max(requestedUpperHeight, MIN_GROUP_CONTENT_HEIGHT), combinedHeight - MIN_GROUP_CONTENT_HEIGHT);
+      const lowerHeight = combinedHeight - upperHeight;
+      groupHeights[upperGroupId] = setTabListHeight(upperList, upperHeight);
+      groupHeights[lowerGroupId] = setTabListHeight(lowerList, lowerHeight);
+    };
+
+    const finishResize = () => {
+      resizer.removeEventListener("pointermove", onPointerMove);
+      resizer.removeEventListener("pointerup", finishResize);
+      resizer.removeEventListener("pointercancel", finishResize);
+      resizer.classList.remove("resizing");
+      document.body.classList.remove("resizing-groups");
+      persistGroupHeights();
+    };
+
+    resizer.addEventListener("pointermove", onPointerMove);
+    resizer.addEventListener("pointerup", finishResize);
+    resizer.addEventListener("pointercancel", finishResize);
+  });
+
+  resizer.addEventListener("dblclick", () => {
+    if (resizer.disabled) return;
+    delete groupHeights[upperGroupId];
+    if (lowerGroupId) delete groupHeights[lowerGroupId];
+    persistGroupHeights();
+    const upperList = groupsEl.querySelector(`[data-group-id="${CSS.escape(upperGroupId)}"] .tab-list`);
+    const lowerList = lowerGroupId ? groupsEl.querySelector(`[data-group-id="${CSS.escape(lowerGroupId)}"] .tab-list`) : null;
+    for (const tabList of [upperList, lowerList]) {
+      if (!tabList) continue;
+      delete tabList.dataset.userHeight;
+      tabList.style.height = "";
+      tabList.style.maxHeight = "";
+    }
+    adjustTabListHeights();
+  });
+
+  return resizer;
 }
 
 function render(groups) {
@@ -218,6 +323,7 @@ function render(groups) {
     
     const tabList = document.createElement("div");
     tabList.className = "tab-list";
+    applyStoredGroupHeight(tabList, group.id);
     
     groupEl.appendChild(header);
     groupEl.appendChild(tabList);
@@ -495,6 +601,10 @@ function render(groups) {
     });
 
     groupsEl.appendChild(groupEl);
+    groupEl.classList.add("has-resizer");
+    const nextGroup = groups[idx + 1];
+    const resizerDisabled = isCollapsed || (nextGroup ? collapsedGroups.has(nextGroup.id) : false);
+    groupsEl.appendChild(createGroupResizer(group.id, nextGroup?.id || null, resizerDisabled));
   });
   
   // 渲染完成后，动态计算每个分组的最大高度，并更新一键收起/展开按钮文字
@@ -521,9 +631,11 @@ function updateToggleAllButtonText(groups) {
 function adjustTabListHeights() {
   const tabLists = document.querySelectorAll('.tab-list:not(.collapsed)');
   if (tabLists.length === 0) return;
+  const automaticTabLists = Array.from(tabLists).filter((tabList) => tabList.dataset.userHeight !== "true");
   
-  // 先移除所有 max-height，让分组自然展开
-  tabLists.forEach((tabList) => {
+  // 只重算未被用户手动调整过的分组
+  automaticTabLists.forEach((tabList) => {
+    tabList.style.height = '';
     tabList.style.maxHeight = 'none';
   });
   
@@ -549,29 +661,38 @@ function adjustTabListHeights() {
       const groupStyle = getComputedStyle(group);
       groupChromeHeight += toPixels(groupStyle.borderTopWidth) + toPixels(groupStyle.borderBottomWidth) + toPixels(groupStyle.marginBottom);
     });
+    document.querySelectorAll('.group-resizer').forEach((resizer) => {
+      groupChromeHeight += resizer.offsetHeight;
+    });
     
-    // 计算所有分组标签列表的实际高度总和
+    const manualTabListHeight = Array.from(tabLists)
+      .filter((tabList) => tabList.dataset.userHeight === "true")
+      .reduce((total, tabList) => total + tabList.offsetHeight, 0);
+
+    // 计算自动高度分组的内容总高度
     let totalTabListHeight = 0;
-    tabLists.forEach((tabList) => {
+    automaticTabLists.forEach((tabList) => {
       totalTabListHeight += tabList.scrollHeight;
     });
     
     // 计算剩余可用高度
     const usedHeight = bodyVerticalPadding + headerHeight + groupChromeHeight;
-    const availableHeight = bodyHeight - usedHeight;
+    const availableHeight = Math.max(0, bodyHeight - usedHeight - manualTabListHeight);
     
     // 如果所有分组内容的总高度小于可用高度，说明底部还有空间，不需要组内滚动
     if (totalTabListHeight <= availableHeight) {
       // 底部还有空间，让所有分组自然展开
-      tabLists.forEach((tabList) => {
+      automaticTabLists.forEach((tabList) => {
+        tabList.style.height = '';
         tabList.style.maxHeight = 'none';
       });
     } else {
       // 空间不足，需要组内滚动，按每个分组的实际内容高度比例分配
-      tabLists.forEach((tabList) => {
+      automaticTabLists.forEach((tabList) => {
         const ratio = tabList.scrollHeight / totalTabListHeight;
         const allocatedHeight = Math.floor(availableHeight * ratio);
         // 至少保留一行标签的可视高度
+        tabList.style.height = '';
         tabList.style.maxHeight = `${Math.max(allocatedHeight, 36)}px`;
       });
     }
