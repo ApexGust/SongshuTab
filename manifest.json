@@ -14,7 +14,7 @@
       "48": "icon.png",
       "128": "icon.png"
     },
-    "default_title": "打开标签收纳侧栏"
+    "default_title": "打开或隐藏 SongShuTab"
   },
   "permissions": [
     "tabs",
@@ -33,6 +33,13 @@
   },
   "options_page": "settings.html",
   "commands": {
+    "toggle-ui": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+K",
+        "mac": "Command+K"
+      },
+      "description": "打开或隐藏 SongShuTab"
+    },
     "quick-capture-active": {
       "suggested_key": {
         "default": "Ctrl+E"

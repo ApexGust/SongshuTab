@@ -10,6 +10,27 @@ const STORAGE_KEYS = { groups: "groups", settings: "settings" };
 const PINNED_GROUP_ID = "pinned-default";
 const QUICK_GROUP_ID = "quick-default";
 const BROWSING_GROUP_ID = "browsing-live";
+const OPEN_SIDE_PANEL_WINDOWS_KEY = "openSidePanelWindows";
+const openSidePanelWindows = new Set();
+
+chrome.storage.session.get(OPEN_SIDE_PANEL_WINDOWS_KEY).then((stored) => {
+  for (const windowId of stored[OPEN_SIDE_PANEL_WINDOWS_KEY] || []) {
+    if (Number.isInteger(windowId)) openSidePanelWindows.add(windowId);
+  }
+});
+
+function rememberSidePanelState(windowId, isOpen) {
+  if (!Number.isInteger(windowId)) return;
+  if (isOpen) {
+    openSidePanelWindows.add(windowId);
+  } else {
+    openSidePanelWindows.delete(windowId);
+  }
+  void chrome.storage.session.set({ [OPEN_SIDE_PANEL_WINDOWS_KEY]: [...openSidePanelWindows] });
+}
+
+chrome.sidePanel.onOpened?.addListener(({ windowId }) => rememberSidePanelState(windowId, true));
+chrome.sidePanel.onClosed?.addListener(({ windowId }) => rememberSidePanelState(windowId, false));
 
 function isDefaultGroupId(groupId) {
   return groupId === PINNED_GROUP_ID || groupId === QUICK_GROUP_ID || groupId === BROWSING_GROUP_ID;
@@ -170,16 +191,16 @@ chrome.runtime.onInstalled.addListener(async () => {
   }
 });
 
-chrome.action.onClicked.addListener(async (tab) => {
-  // 使用缓存的设置，避免异步操作导致手势上下文丢失
+async function toggleUI(tab) {
+  // 使用缓存的设置，避免在用户手势中读取存储
   const viewMode = cachedSettings.viewMode || "side";
 
   if (viewMode === "tab") {
-    // 标签页模式：直接打开或激活标签页
+    // 标签页模式：已打开则关闭，否则新建
     try {
       const existing = await chrome.tabs.query({ url: chrome.runtime.getURL("panel.html") });
       if (existing.length) {
-        await chrome.tabs.update(existing[0].id, { active: true });
+        await chrome.tabs.remove(existing.map((item) => item.id));
         return;
       }
       await chrome.tabs.create({ url: "panel.html", active: true });
@@ -189,40 +210,30 @@ chrome.action.onClicked.addListener(async (tab) => {
     return;
   }
 
-  // Side panel 模式：必须立即调用，确保在用户手势上下文中
-  // tab.windowId 应该总是可用的，如果不可用，尝试获取当前窗口
-  const windowId = tab?.windowId;
-  if (windowId) {
-    // 有 windowId，立即调用
-    try {
-      await chrome.sidePanel.open({ windowId });
-      // 关闭可能存在的 panel.html 标签页（不阻塞）
-      chrome.tabs.query({ url: chrome.runtime.getURL("panel.html") })
-        .then((tabs) => {
-          if (tabs.length > 0) {
-            chrome.tabs.remove(tabs.map((t) => t.id)).catch(() => {});
-          }
-        })
-        .catch(() => {});
-    } catch (e) {
-      console.error("sidePanel.open failed", e);
+  const windowId = tab?.windowId || (await chrome.windows.getCurrent()).id;
+  if (!windowId) return;
+
+  try {
+    if (openSidePanelWindows.has(windowId) && chrome.sidePanel.close) {
+      rememberSidePanelState(windowId, false);
+      await chrome.sidePanel.close({ windowId });
+      return;
     }
-  } else {
-    // 没有 windowId，尝试获取当前窗口（可能会丢失手势上下文）
-    try {
-      const currentWindow = await chrome.windows.getCurrent();
-      await chrome.sidePanel.open({ windowId: currentWindow.id });
-      chrome.tabs.query({ url: chrome.runtime.getURL("panel.html") })
-        .then((tabs) => {
-          if (tabs.length > 0) {
-            chrome.tabs.remove(tabs.map((t) => t.id)).catch(() => {});
-          }
-        })
-        .catch(() => {});
-    } catch (e) {
-      console.error("sidePanel.open failed", e);
-    }
+
+    rememberSidePanelState(windowId, true);
+    await chrome.sidePanel.open({ windowId });
+    chrome.tabs
+      .query({ url: chrome.runtime.getURL("panel.html") })
+      .then((tabs) => tabs.length && chrome.tabs.remove(tabs.map((item) => item.id)))
+      .catch(() => {});
+  } catch (e) {
+    rememberSidePanelState(windowId, false);
+    console.error("sidePanel toggle failed", e);
   }
+}
+
+chrome.action.onClicked.addListener((tab) => {
+  void toggleUI(tab);
 });
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
@@ -572,8 +583,6 @@ async function captureActiveTab() {
   } catch (_e) {
     // 若侧栏未打开，忽略
   }
-  // 注意：快捷键命令上下文不支持 sidePanel.open()，所以不在这里自动打开
-  // 用户需要手动点击扩展图标打开侧栏查看收纳的标签
 }
 
 async function loadState(targetWindowId) {
@@ -729,13 +738,15 @@ function ensurePinnedGroup(groups, groupName) {
   return pinned;
 }
 
-chrome.commands.onCommand.addListener(async (command) => {
+chrome.commands.onCommand.addListener(async (command, tab) => {
   if (command === "quick-capture-active") {
     try {
       await captureActiveTab();
     } catch (e) {
       console.error(e);
     }
+  } else if (command === "toggle-ui") {
+    await toggleUI(tab);
   }
 });
 
@@ -756,44 +767,3 @@ chrome.tabs.onUpdated.addListener((_tabId, changeInfo) => {
   }
 });
 chrome.tabs.onActivated.addListener(() => broadcastBrowsingRefresh());
-
-async function openUI(windowId) {
-  const stored = await chrome.storage.local.get([STORAGE_KEYS.settings]);
-  const settings = stored[STORAGE_KEYS.settings] || DEFAULT_SETTINGS;
-  const viewMode = settings.viewMode || "side";
-
-  if (viewMode === "tab") {
-    // 尝试找到已打开的 panel.html Tab 并激活
-    const existing = await chrome.tabs.query({ url: chrome.runtime.getURL("panel.html") });
-    if (existing.length) {
-      await chrome.tabs.update(existing[0].id, { active: true });
-      return;
-    }
-    await chrome.tabs.create({ url: "panel.html", active: true });
-    return;
-  }
-
-  // 默认 side panel - 先关闭可能存在的 panel.html 标签页
-  try {
-    const existingTabs = await chrome.tabs.query({ url: chrome.runtime.getURL("panel.html") });
-    if (existingTabs.length > 0) {
-      await chrome.tabs.remove(existingTabs.map((t) => t.id));
-    }
-  } catch (e) {
-    // 忽略关闭标签页的错误
-  }
-
-  // 打开 side panel
-  try {
-    let targetWindowId = windowId;
-    if (!targetWindowId) {
-      const currentWindow = await chrome.windows.getCurrent();
-      targetWindowId = currentWindow.id;
-    }
-    if (targetWindowId) {
-      await chrome.sidePanel.open({ windowId: targetWindowId });
-    }
-  } catch (e) {
-    console.error("sidePanel.open failed", e);
-  }
-}

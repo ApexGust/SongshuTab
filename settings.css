@@ -78,12 +78,62 @@ select:focus {
 }
 
 .kbd {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   padding: 6px 8px;
   border: 1px solid var(--border);
   border-radius: 6px;
   background: var(--control);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
   box-shadow: inset 0 -1px 0 rgba(255, 255, 255, 0.05);
+}
+
+.shortcut-heading h3 {
+  margin: 0;
+}
+
+.shortcut-list {
+  margin-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.shortcut-item {
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.shortcut-name {
+  margin-bottom: 10px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.shortcut-bindings {
+  display: grid;
+  gap: 8px;
+}
+
+.shortcut-binding {
+  display: grid;
+  grid-template-columns: 112px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+}
+
+.platform-label {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.key-combo {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 12px;
 }
 
 h3 {
@@ -297,4 +347,11 @@ input:checked + .slider:before {
 
 #show-browsing {
   accent-color: #10b981;
+}
+
+@media (max-width: 460px) {
+  .shortcut-binding {
+    grid-template-columns: 1fr;
+    gap: 5px;
+  }
 }

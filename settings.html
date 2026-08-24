@@ -66,16 +66,39 @@
       </section>
 
       <section class="card">
-        <div class="row">
-          <label>快捷键</label>
-          <div style="display: flex; align-items: center; gap: 8px;">
-            <span class="default-badge">默认</span>
-            <div style="display: flex; align-items: center; gap: 4px;">
-              <div class="kbd">Command</div> + <div class="kbd">E</div>
+        <div class="row shortcut-heading">
+          <h3>快捷键</h3>
+          <span class="default-badge">默认配置</span>
+        </div>
+        <div class="shortcut-list">
+          <div class="shortcut-item">
+            <div class="shortcut-name">打开 / 隐藏界面</div>
+            <div class="shortcut-bindings">
+              <div class="shortcut-binding">
+                <span class="platform-label">macOS</span>
+                <span class="key-combo"><kbd class="kbd">Command</kbd><span>+</span><kbd class="kbd">K</kbd></span>
+              </div>
+              <div class="shortcut-binding">
+                <span class="platform-label">Windows / Linux</span>
+                <span class="key-combo"><kbd class="kbd">Ctrl</kbd><span>+</span><kbd class="kbd">Shift</kbd><span>+</span><kbd class="kbd">K</kbd></span>
+              </div>
+            </div>
+          </div>
+          <div class="shortcut-item">
+            <div class="shortcut-name">收纳当前活动标签</div>
+            <div class="shortcut-bindings">
+              <div class="shortcut-binding">
+                <span class="platform-label">macOS</span>
+                <span class="key-combo"><kbd class="kbd">Command</kbd><span>+</span><kbd class="kbd">E</kbd></span>
+              </div>
+              <div class="shortcut-binding">
+                <span class="platform-label">Windows / Linux</span>
+                <span class="key-combo"><kbd class="kbd">Ctrl</kbd><span>+</span><kbd class="kbd">E</kbd></span>
+              </div>
             </div>
           </div>
         </div>
-        <p class="muted small">用于"收纳当前活动标签"命令，默认快捷键为 Ctrl+E（Mac 上为 Command+E）。若与系统快捷键冲突，请在浏览器的"快捷键"页面手动调整。</p>
+        <p class="muted small">Chrome 显示的“激活该扩展程序”快捷键也会打开或隐藏界面。若快捷键未自动分配或存在冲突，请在浏览器快捷键页面手动调整。</p>
         <button id="open-shortcuts" class="shortcuts-btn">打开浏览器快捷键设置</button>
       </section>
 
